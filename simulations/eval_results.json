@@ -1,0 +1,104 @@
+{
+  "total": 8,
+  "passed": 8,
+  "failed": 0,
+  "errored": 0,
+  "results": [
+    {
+      "id": "water_density",
+      "title": "Water reaches its real density",
+      "why": "SPC/E water at 300 K, 1 bar must settle near 1000 kg/m\u00b3 (experiment: 997). If the box, the ions or the barostat are wrong, this is the first thing that breaks.",
+      "status": "PASS",
+      "measured": 989.2312,
+      "unit": "kg/m\u00b3",
+      "expected": "975 \u2026 1025",
+      "reference": "997 (experiment, 298 K)",
+      "seconds": 5.7,
+      "run_id": "20260713_014809_water_box"
+    },
+    {
+      "id": "water_structure",
+      "title": "Water's hydrogen-bond shell is in the right place",
+      "why": "The first peak of the O\u2013O radial distribution function is at 0.28 nm in real water (neutron scattering). This is the structure of liquid water itself.",
+      "status": "PASS",
+      "measured": 0.274,
+      "unit": "nm",
+      "expected": "0.26 \u2026 0.3",
+      "reference": "0.28 (neutron diffraction)",
+      "seconds": 5.6,
+      "run_id": "20260713_014815_water_box"
+    },
+    {
+      "id": "thermostat_holds",
+      "title": "The thermostat actually holds the temperature",
+      "why": "Mean temperature must equal the setpoint. If it drifts, the integrator or coupling is broken and every result downstream is garbage.",
+      "status": "PASS",
+      "measured": 298.9836,
+      "unit": "K",
+      "expected": "295 \u2026 305",
+      "reference": "300 (the setpoint)",
+      "seconds": 6.0,
+      "run_id": "20260713_014821_water_box"
+    },
+    {
+      "id": "lj_liquid_is_structured",
+      "title": "Liquid argon is structured",
+      "why": "A dense liquid has a strong first coordination shell: g(r) peaks well above 2. If this is flat, we are not simulating a liquid.",
+      "status": "PASS",
+      "measured": 2.8977,
+      "unit": "g(r)",
+      "expected": "2.0 \u2026 4.5",
+      "reference": ">2 for a dense LJ liquid",
+      "seconds": 3.4,
+      "run_id": "20260713_014827_lj_argon"
+    },
+    {
+      "id": "lj_gas_is_unstructured",
+      "title": "Argon gas is NOT structured",
+      "why": "The same code at low density must give a nearly flat g(r). This is the control: it proves the previous test measured physics, not an artefact.",
+      "status": "PASS",
+      "measured": 1.4105,
+      "unit": "g(r)",
+      "expected": "0.8 \u2026 1.8",
+      "reference": "~1 for a dilute gas",
+      "seconds": 3.5,
+      "run_id": "20260713_014830_lj_argon"
+    },
+    {
+      "id": "qm_water_energy",
+      "title": "Quantum energy of water matches the textbook",
+      "why": "Hartree\u2013Fock/STO-3G on water is a canonical number: \u221274.96 Hartree. Any competent QM code reproduces it exactly.",
+      "status": "PASS",
+      "measured": -74.9659,
+      "unit": "Hartree",
+      "expected": "-74.99 \u2026 -74.93",
+      "reference": "-74.9659 (HF/STO-3G, literature)",
+      "seconds": 0.6,
+      "run_id": "20260713_014834_qmmm_opt"
+    },
+    {
+      "id": "oh_bond_length",
+      "title": "The O\u2013H bond comes out the right length",
+      "why": "Scanning the bond must put the energy minimum at the real O\u2013H distance (~0.96 \u00c5). This validates the whole reaction-profile machinery.",
+      "status": "PASS",
+      "measured": 0.99,
+      "unit": "\u00c5",
+      "expected": "0.9 \u2026 1.1",
+      "reference": "0.96 (experiment)",
+      "seconds": 0.8,
+      "run_id": "20260713_014834_reaction_scan"
+    },
+    {
+      "id": "protein_stays_folded",
+      "title": "A stable protein stays folded",
+      "why": "Ubiquitin is a rigid, well-behaved protein. Backbone RMSD must plateau low (< 0.4 nm). A big number means the force field, ions or box are wrong \u2014 or it unfolded, which it should not.",
+      "status": "PASS",
+      "measured": 0.1011,
+      "unit": "nm",
+      "expected": "0.0 \u2026 0.4",
+      "reference": "<0.3 nm typical for ubiquitin",
+      "seconds": 12.8,
+      "run_id": "20260713_014835_protein"
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plan Builder · MD Lab</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <a class="back" href="/" title="Home">←</a>
+      <span class="logo">🤖</span>
+      <div>
+        <div class="title">Plan Builder</div>
+        <div class="subtitle">describe a simulation in plain JSON — it checks the physics before it runs</div>
+      </div>
+    </div>
+    <nav class="tabs">
+      <a class="tab" href="/explore">🔬 Explorer</a>
+      <a class="tab" href="/monitor">📊 Monitor</a>
+    </nav>
+  </header>
+
+  <main class="planpage">
+    <aside class="plan-side">
+      <h2>Start from an example</h2>
+      <div id="examples" class="plan-examples"></div>
+
+      <h2 style="margin-top:22px">What you can set</h2>
+      <p class="muted" style="font-size:12px">Every knob is documented — unit, meaning,
+        and when to change it. Search the full ontology:</p>
+      <input type="text" id="onto-search" placeholder="e.g. thermostat, cutoff, salt" class="onto-input">
+      <div id="onto-results" class="onto-results"></div>
+    </aside>
+
+    <section class="plan-main">
+      <div class="plan-editor-wrap">
+        <div class="plan-toolbar">
+          <span id="plan-title" class="muted">untitled plan</span>
+          <span class="rep-sep"></span>
+          <button id="btn-validate" class="jbtn">Check physics</button>
+          <button id="btn-mdp" class="jbtn">Show GROMACS input</button>
+          <button id="btn-run" class="launch" style="width:auto;padding:9px 20px;margin:0">▶ Run it</button>
+        </div>
+        <textarea id="editor" spellcheck="false"></textarea>
+      </div>
+
+      <div class="plan-panels">
+        <div class="plan-panel">
+          <h3>Physics check</h3>
+          <div id="validation" class="muted">Click “Check physics”.</div>
+        </div>
+        <div class="plan-panel">
+          <h3>Cost before you run</h3>
+          <div id="cost" class="muted">—</div>
+        </div>
+      </div>
+
+      <div class="plan-panel hidden" id="mdp-panel">
+        <h3>The actual GROMACS input this produces <span class="muted">(nothing hidden)</span></h3>
+        <pre id="mdp"></pre>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/plan.js"></script>
+</body>
+</html>

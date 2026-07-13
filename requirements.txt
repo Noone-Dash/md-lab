@@ -1,0 +1,14 @@
+# Python deps for the MD Lab (install into .venv)
+flask>=3.0
+numpy>=1.26
+psutil>=5.9         # monitor: CPU/RAM telemetry
+"setuptools<81"      # insane needs pkg_resources, dropped in setuptools 81+
+
+# engines
+openmm>=8.5          # OpenMM track (implicit-solvent peptide MD)
+pyscf>=2.13          # QM/MM track (HF/DFT + MM electrostatic embedding)
+ase>=3.26            # optimiser + PySCF calculator glue for the QM/MM track
+insane>=1.2          # Martini bilayer builder (coarse-grained track)
+
+# 3Dmol.js is vendored in viewer/static/ (no pip needed).
+# GROMACS 2026.2 is external (source assets are downloaded to assets/martini/).

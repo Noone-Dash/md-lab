@@ -1,0 +1,67 @@
+[
+  {
+    "id": "lysozyme_pad1.0",
+    "pdb": "1AKI",
+    "note": "small box",
+    "atoms": 27242,
+    "ns_per_day": 618.375,
+    "all_rates": [
+      618.375,
+      622.542,
+      613.471
+    ],
+    "setup_plus_bench_wall_s": 20.2
+  },
+  {
+    "id": "lysozyme_pad1.4",
+    "pdb": "1AKI",
+    "note": "typical production box",
+    "atoms": 37580,
+    "ns_per_day": 294.953,
+    "all_rates": [
+      253.723,
+      306.327,
+      294.953
+    ],
+    "setup_plus_bench_wall_s": 40.6
+  },
+  {
+    "id": "ubiquitin_pad1.2",
+    "pdb": "1UBQ",
+    "note": "different protein, same regime",
+    "atoms": 22399,
+    "ns_per_day": 669.626,
+    "all_rates": [
+      669.626,
+      659.235,
+      669.786
+    ],
+    "setup_plus_bench_wall_s": 16.1
+  },
+  {
+    "id": "lysozyme_pad2.0",
+    "pdb": "1AKI",
+    "note": "fat solvent shell",
+    "atoms": 55976,
+    "ns_per_day": 197.362,
+    "all_rates": [
+      203.573,
+      197.362,
+      178.349
+    ],
+    "setup_plus_bench_wall_s": 51.1
+  },
+  {
+    "id": "lysozyme_pad2.8",
+    "pdb": "1AKI",
+    "note": "large system",
+    "atoms": 90324,
+    "ns_per_day": 141.857,
+    "all_rates": [
+      144.273,
+      141.857,
+      127.178
+    ],
+    "setup_plus_bench_wall_s": 75.9
+  }
+]

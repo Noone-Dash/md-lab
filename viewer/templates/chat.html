@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ask the lab · MD Lab</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <a class="back" href="/">←</a>
+      <span class="logo">💬</span>
+      <div>
+        <div class="title">Ask the lab</div>
+        <div class="subtitle" id="chat-sub">a chemist that drives the real tools — it can't fake a result</div>
+      </div>
+    </div>
+    <nav class="tabs">
+      <a class="tab" href="/plan">🤖 Plan Builder</a>
+      <a class="tab" href="/evals">✅ Evals</a>
+      <a class="tab" href="/monitor">📊 Monitor</a>
+    </nav>
+  </header>
+
+  <main class="chatpage">
+    <div id="nokey" class="nokey hidden"></div>
+
+    <div id="thread" class="thread">
+      <div class="msg bot">
+        <div class="bubble">
+          <p>I run this lab. I can look up what a parameter does, build a simulation plan,
+          check its physics, tell you what it'll cost, run it on the GPU, and then read the
+          numbers back to you honestly.</p>
+          <p class="muted">Every claim I make comes from a tool call you can see below my replies —
+          I can't invent a result.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="suggest" id="suggest"></div>
+
+    <form id="chat-form" class="chat-form">
+      <textarea id="input" rows="2" placeholder="e.g. simulate lysozyme at 310 K in physiological salt for 100 ps and tell me if it stays folded"></textarea>
+      <button id="send" class="launch" style="width:auto;padding:12px 22px;margin:0">Send</button>
+    </form>
+  </main>
+
+  <script src="/static/chat.js"></script>
+</body>
+</html>

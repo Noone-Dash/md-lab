@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MD Lab</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">⬡</span>
+      <div>
+        <div class="title">MD&nbsp;Lab</div>
+        <div class="subtitle" id="gmxver">a molecular simulation playground</div>
+      </div>
+    </div>
+    <nav class="tabs">
+      <a class="tab" href="/chat">💬 Ask the lab</a>
+      <a class="tab" href="/plan">🤖 Plan Builder</a>
+      <a class="tab" href="/evals">✅ Evals</a>
+      <a class="tab" href="/explore">🔬 Structure Explorer</a>
+      <a class="tab" href="/monitor">📊 Monitor</a>
+    </nav>
+  </header>
+
+  <main class="hub">
+    <a class="explore-banner" href="/explore">
+      <span class="eb-icon">🔬</span>
+      <span>
+        <b>See a real molecule right now</b>
+        <span class="eb-sub">Load any structure from the RCSB PDB or AlphaFold — lysozyme, haemoglobin, DNA — no simulation needed.</span>
+      </span>
+      <span class="eb-go">Open Explorer →</span>
+    </a>
+
+    <div class="hub-intro">
+      <h1>Pick a scale to explore</h1>
+      <p class="muted">Each track is a separate workspace with its own engine. Badges say
+        whether a track runs a <b class="tag-live">live</b> production engine, a
+        <b class="tag-model">simplified model</b>, or is an
+        <b class="tag-unavailable">unavailable</b> placeholder to fill in later.</p>
+    </div>
+
+    <div id="track-grid" class="track-grid"></div>
+
+    <section class="recent">
+      <h2>Recent runs</h2>
+      <div id="recent-runs" class="recent-runs"></div>
+    </section>
+  </main>
+
+  <script src="/static/hub.js"></script>
+</body>
+</html>

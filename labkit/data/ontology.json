@@ -1,0 +1,4017 @@
+{
+ "schema_version": "ontology/1",
+ "note": "Machine-readable MD parameter ontology. Every entry an agent may set.",
+ "parameters": [
+  {
+   "key": "integrator",
+   "area": "integrator_and_timestep",
+   "label": "Integrator / minimizer",
+   "meaning": "Selects the algorithm that advances the system: a Newtonian/stochastic MD propagator (md, md-vv, sd, bd) or an energy minimizer (steep, cg, l-bfgs) that removes clashes without any notion of time.",
+   "mdp_key": "integrator",
+   "type": "choice",
+   "unit": "dimensionless",
+   "default": "md",
+   "options": [
+    "md",
+    "md-vv",
+    "sd",
+    "bd",
+    "steep",
+    "cg",
+    "l-bfgs"
+   ],
+   "range": "enumerated; 'steep'/'cg'/'l-bfgs' are only legal in a minimization stage, 'md'/'md-vv'/'sd'/'bd' only in a dynamics stage",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "stage (EM vs NVT vs NPT vs production)",
+    "tcoupl (sd is its own thermostat; setting tcoupl with sd is redundant/illegal-ish)",
+    "dt",
+    "constraints"
+   ],
+   "cost_impact": "md ~ baseline (leap-frog, cheapest). md-vv ~5-10% slower and disables some GPU update paths. sd adds one Gaussian random draw per DOF per step (~5% CPU, negligible on GPU with -update gpu). Minimizers: steep is cheapest per step but needs the most steps; l-bfgs converges in fewer steps but cannot be domain-decomposed (single rank only) and is not GPU-accelerated.",
+   "agent_guidance": "Default to 'md' (leap-frog) for every equilibration/production stage of fluid/solvent/membrane/protein systems: it is the only path that supports full GPU-resident stepping (-update gpu) on the GB10. Switch to 'sd' when (a) the system is small (<5000 atoms) or poorly equilibrated and you want robust, ergodic temperature control without the V-rescale/Nose-Hoover coupling artefacts, (b) you are running implicit-solvent or vacuum where there is no solvent bath to thermalize the solute, or (c) you need a stochastic thermostat that also damps a blow-up. With 'sd', tau-t becomes the inverse friction (use 1.0-2.0 ps for weak coupling, 0.1 ps for aggressive damping) and tcoupl must be 'no'. Use 'md-vv' only if you explicitly need exact velocities at the same time as positions (e.g. Nose-Hoover/MTTK conserved-quantity checks); never use it as a default. Never use 'bd' unless the user asks for overdamped Brownian dynamics. For the EM stage always use 'steep' first; if the user needs a tight minimum (normal modes, QM handoff, emtol < 10), append a second minimization stage with 'cg' or 'l-bfgs' after steep \u2014 steep is robust far from the minimum, cg/l-bfgs are efficient near it.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "dt",
+   "area": "integrator_and_timestep",
+   "label": "Timestep",
+   "meaning": "The integration timestep; it must be short enough to resolve the fastest vibrational period in the system (roughly period/20), and every fast degree of freedom you remove with constraints or hydrogen-mass repartitioning raises the ceiling on it.",
+   "mdp_key": "dt (ps)",
+   "type": "float",
+   "unit": "ps",
+   "default": "0.002",
+   "options": [],
+   "range": "1e-4 to 0.04 ps for MD (hard clamp); the physically valid maximum is set by `constraints` + `mass-repartition-factor` + system class \u2014 see guidance",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein",
+    "cell"
+   ],
+   "depends_on": [
+    "constraints",
+    "constraint-algorithm",
+    "mass-repartition-factor",
+    "system class / force field (all-atom vs united-atom vs Martini CG)",
+    "integrator (irrelevant for minimizers)",
+    "nsteps (dt * nsteps = physical time)",
+    "presence of virtual sites in the topology"
+   ],
+   "cost_impact": "Runtime is exactly inversely proportional to dt for a fixed physical time: going 2 fs -> 4 fs halves wall-clock and halves GPU-hours. This is the single biggest lever on cost in the whole lab. Too large a dt does not merely lose accuracy, it wastes 100% of the budget (LINCS warnings, exploding energies, crashed run).",
+   "agent_guidance": "Never pick dt in isolation \u2014 pick the (constraints, mass-repartition-factor, dt) triple together. Safe ceilings by regime, all-atom force fields (Amber/CHARMM/OPLS): constraints=none -> dt <= 0.0005 ps (0.5 fs; X-H stretch period is ~10 fs); constraints=h-bonds (with rigid SETTLE water) -> dt = 0.002 ps (2 fs) [THE DEFAULT for protein/solvent/nacl_water]; constraints=all-bonds -> dt = 0.002 ps still (heavy-atom bond periods ~20 fs; all-bonds alone does NOT buy you 4 fs, a common agent error); constraints=h-bonds + mass-repartition-factor=3 (HMR) -> dt = 0.004 ps (4 fs), the recommended way to double throughput on a protein; constraints=h-angles + HMR -> dt = 0.005 ps (5 fs, only with a validated force field); virtual-site hydrogens (-vsite h in pdb2gmx) + all-bonds -> dt = 0.004-0.005 ps. Coarse-grained Martini 3 (membrane): dt = 0.02 ps (20 fs) standard, 0.03 ps only for pure lipid/solvent systems with no fast bonded terms, and drop to 0.01 ps if the system contains a protein with a stiff elastic network or if you see 'LINCS/constraint' or 'pressure scaling more than 1%' warnings. Bare LJ fluid (lj_argon, no bonds, no H): dt = 0.005 ps (5 fs) is safe and is the current default; up to 0.01 ps works for argon at 100 K but check total-energy drift < 1 kT/ns/atom. QM/QM-MM: not applicable (geometry optimization, no timestep) unless doing BOMD, where dt <= 0.0005 ps. Cell reaction-diffusion track: dt is bounded by the explicit-Euler CFL/stability condition dt <= 0.2 * h^2 / D_max (h = grid spacing, D = largest diffusion coefficient) and additionally dt <= 0.2 / k_max for the fastest reaction rate; if the concentration field goes negative or oscillates checkerboard-wise, halve dt. Failure signature to self-correct on: 'Water molecule cannot be settled', 'LINCS WARNING ... relative constraint deviation', 'Step X: The total potential energy is nan', or a temperature that climbs monotonically -> halve dt (or add constraints) and resubmit, do not simply retry. Also HALVE dt (or use constraints=h-bonds + a short 100 ps restrained warm-up) for the first equilibration stage of any freshly built or freshly minimized system; you can raise it for production once the box is stable.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "nsteps",
+   "area": "integrator_and_timestep",
+   "label": "Number of steps",
+   "meaning": "How many integration steps to take in this stage; the physical duration of the stage is nsteps * dt, so nsteps alone is meaningless without dt.",
+   "mdp_key": "nsteps (also mdrun -nsteps override; -1 = run until -maxh / until stopped)",
+   "type": "int",
+   "unit": "steps",
+   "default": "500000",
+   "options": [],
+   "range": "0 to 1e9 (-1 = unlimited, only valid together with an mdrun -maxh wall-clock cap)",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein",
+    "qm",
+    "cell"
+   ],
+   "depends_on": [
+    "dt",
+    "sim_time (the preferred user-facing knob)",
+    "stage",
+    "GPU budget / -maxh"
+   ],
+   "cost_impact": "Linear in runtime and in trajectory size. This IS the cost.",
+   "agent_guidance": "Do not ask a user for nsteps \u2014 derive it: nsteps = round(sim_time_ns * 1000 / dt_ps). Always compute and log both. Sanity anchors: 10 ns of lysozyme in water at dt=0.002 requires nsteps=5,000,000 (note the existing recipes cap nsteps at 500,000, which at dt=0.002 is only 1 ns \u2014 the cap must be raised or the request is unsatisfiable). For minimizers, nsteps is a *cap*, not a target: 50,000 for steep is standard and it usually converges on emtol long before that; if steep exits on nsteps rather than on Fmax < emtol, that is a red flag (bad starting geometry / overlapping atoms) \u2014 do not proceed to MD, re-examine the build. Typical stage lengths for a protein: EM 50,000 max steps; NVT restrained 50-100 ps (25,000-50,000 steps @ 2 fs); NPT restrained 100-500 ps; production = whatever the user asked for. If the requested nsteps exceeds the GPU budget, do NOT silently truncate: chunk the run into checkpointed segments (-cpi/-cpo + convert-tpr -extend) and/or raise dt via HMR, and tell the user the tradeoff.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "sim_time",
+   "area": "integrator_and_timestep",
+   "label": "Simulation time (logical)",
+   "meaning": "The physical duration of a dynamics stage in nanoseconds \u2014 the quantity a scientist actually specifies; the engine never sees it, it is converted to nsteps.",
+   "mdp_key": "nsteps = round(sim_time * 1000 / dt)",
+   "type": "float",
+   "unit": "ns",
+   "default": "1.0",
+   "options": [],
+   "range": "0.001 to 10000 ns (practical ceiling set by the GPU budget, not by physics)",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein",
+    "cell"
+   ],
+   "depends_on": [
+    "dt",
+    "nsteps",
+    "scheduler budget",
+    "observable being measured"
+   ],
+   "cost_impact": "The user-facing cost axis. Estimate ns/day from system size and dt before submitting; on a single GB10 expect roughly 100-250 ns/day for a ~35k-atom protein-in-water box at dt=2 fs with GPU-resident update, ~2x that with HMR at 4 fs, and 1000+ ns/day for a Martini bilayer at dt=20 fs.",
+   "agent_guidance": "This should be the primary exposed knob; expose nsteps only as an advanced/derived readout. Choose sim_time from the observable, not from habit: side-chain relaxation / local RMSD plateau 5-20 ns; 'does lysozyme stay folded' 10-50 ns (RMSD to start, backbone, expect plateau at 0.15-0.3 nm); solvent RDF/density convergence 0.5-2 ns; water/ion diffusion coefficient from MSD >= 5 ns with a 1-5 ns fit window; membrane area-per-lipid equilibration (Martini) >= 200 ns, atomistic >= 100 ns; protein folding or large conformational change: out of scope for a single run, say so. Always keep equilibration stages OUT of the analysis window.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "tinit",
+   "area": "integrator_and_timestep",
+   "label": "Initial time",
+   "meaning": "The time value written into the first frame of this stage's trajectory, used to make a multi-stage protocol have a continuous time axis.",
+   "mdp_key": "tinit (ps)",
+   "type": "float",
+   "unit": "ps",
+   "default": "0",
+   "options": [],
+   "range": "0 to 1e9",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "previous stage's end time",
+    "continuation"
+   ],
+   "cost_impact": "none",
+   "agent_guidance": "Leave at 0 for a single-stage run. In a multi-stage protocol set tinit of each stage to the cumulative time of the preceding stages so that concatenated trajectories and energy files have a monotone time axis \u2014 otherwise downstream analyses (MSD fits, block averaging, the viewer's frame timeline) will see time resetting to zero and silently mis-window. Also set it when restarting a chunked long run that was not continued via a checkpoint.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "init-step",
+   "area": "integrator_and_timestep",
+   "label": "Initial step counter",
+   "meaning": "The step number the counter starts at; matters only for reproducibility of stochastic streams and for output-frequency alignment on restarts.",
+   "mdp_key": "init-step",
+   "type": "int",
+   "unit": "steps",
+   "default": "0",
+   "options": [],
+   "range": "0 to 1e9",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "tinit",
+    "continuation",
+    "checkpoint restart"
+   ],
+   "cost_impact": "none",
+   "agent_guidance": "Almost never set this by hand \u2014 mdrun -cpi handles it automatically on a checkpoint restart. Only set it if you are stitching stages manually without checkpoints and you need the nstxout/nstenergy output grid to stay aligned across stages.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "constraints",
+   "area": "integrator_and_timestep",
+   "label": "Bond constraints",
+   "meaning": "Which bonds are held rigid (converted from vibrating springs to holonomic constraints), removing the fastest degrees of freedom and thereby setting the ceiling on dt.",
+   "mdp_key": "constraints (none | h-bonds | all-bonds | h-angles | all-angles)",
+   "type": "choice",
+   "unit": "dimensionless",
+   "default": "h-bonds",
+   "options": [
+    "none",
+    "h-bonds",
+    "all-bonds",
+    "h-angles",
+    "all-angles"
+   ],
+   "range": "enumerated",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "dt",
+    "constraint-algorithm",
+    "force field (its parameters were fitted with a specific constraint scheme)",
+    "mass-repartition-factor",
+    "whether the topology already declares constraints (Martini) or a rigid water model (SETTLE)"
+   ],
+   "cost_impact": "h-bonds costs a few percent per step but permits a 4x larger dt than 'none' -> a ~4x net win. all-bonds is slightly more expensive than h-bonds and buys almost nothing in dt. On GPU, constraints are part of the GPU-resident update path, so the per-step cost is close to free.",
+   "agent_guidance": "Use 'h-bonds' for every atomistic system (protein, solvent, nacl_water) \u2014 it is what Amber/CHARMM/OPLS assume and it is what enables dt=2 fs. IMPORTANT: rigid water (TIP3P/SPC/E) is constrained by SETTLE from the topology regardless of this key, so constraints=none does NOT give you flexible water unless the topology is compiled with -DFLEXIBLE; conversely, an EM stage that wants flexible water needs define=-DFLEXIBLE. Use 'none' for the bare LJ fluid (there are no bonds \u2014 the key is a no-op there) and for Martini (Martini bonds are already declared as constraints in the .itp; setting anything else here can double-constrain and crash grompp). Do NOT reach for 'all-bonds' hoping for a bigger timestep: heavy-atom bond periods are ~20 fs, so all-bonds still caps you at ~2-2.5 fs; the correct route to 4 fs is h-bonds + mass-repartition-factor=3. Use 'h-angles' only in combination with HMR and a force field validated for it, and only if you have verified the observable of interest is unaffected \u2014 it perturbs the conformational ensemble of side chains. Never use 'all-angles'. If a run dies with LINCS warnings, the fix order is: (1) lower dt, (2) increase lincs-order/lincs-iter, (3) re-minimize / add a restrained warm-up \u2014 not (4) loosen constraints.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "constraint-algorithm",
+   "area": "integrator_and_timestep",
+   "label": "Constraint solver",
+   "meaning": "The numerical scheme used to enforce the bond constraints each step: LINCS (linear, non-iterative, parallel, GPU-capable) or SHAKE (iterative, serial, works with any constraint topology).",
+   "mdp_key": "constraint-algorithm (LINCS | SHAKE)",
+   "type": "choice",
+   "unit": "dimensionless",
+   "default": "LINCS",
+   "options": [
+    "LINCS",
+    "SHAKE"
+   ],
+   "range": "enumerated",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "constraints",
+    "integrator (LINCS is not used for energy minimization or normal-mode analysis, where SHAKE is used instead)",
+    "presence of constraint rings/angle constraints"
+   ],
+   "cost_impact": "LINCS is O(N) and runs on the GPU; SHAKE is iterative, CPU-only in practice, does not work with domain decomposition, and can be 2-10x slower. Choosing SHAKE on the GB10 kills GPU-resident update and is a large cost regression.",
+   "agent_guidance": "Always LINCS. The only reasons to switch to SHAKE: a topology with constraints that form coupled rings LINCS cannot handle, or a methodological requirement to reproduce a published SHAKE setup. If you choose SHAKE you must also set shake-tol and you must accept the loss of GPU update offload; warn the user about the cost.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "lincs-order",
+   "area": "integrator_and_timestep",
+   "label": "LINCS expansion order",
+   "meaning": "The order of the matrix-inversion expansion LINCS uses to project out constraint violations; higher order = more accurate constraint satisfaction per step.",
+   "mdp_key": "lincs-order",
+   "type": "int",
+   "unit": "dimensionless",
+   "default": "4",
+   "options": [],
+   "range": "1 to 12 (practically 4-8)",
+   "applies_to": [
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "dt",
+    "constraints",
+    "integrator (with sd/md-vv, accuracy requirements are higher)",
+    "lincs-iter"
+   ],
+   "cost_impact": "Cost grows roughly linearly with order but constraints are a small fraction of the step, so 4 -> 6 is typically <2% wall-clock. Cheap insurance.",
+   "agent_guidance": "Keep the default 4 for dt <= 2 fs with h-bonds. Raise to 6 (and lincs-iter to 2) whenever you push the timestep: HMR at dt=4 fs, h-angles, or any run that emits 'LINCS WARNING: relative constraint deviation after LINCS' in the log. Raise to 8 for constraints=all-bonds on a large protein with dt >= 4 fs. Also raise it if you are using constraints=all-bonds with the md-vv integrator, and note the GROMACS rule of thumb: with sd or bd you should use lincs-order at least 6 (or double lincs-iter) because the stochastic kicks perturb constraints more than a deterministic step does.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "lincs-iter",
+   "area": "integrator_and_timestep",
+   "label": "LINCS correction iterations",
+   "meaning": "How many times the rotational-lengthening correction is applied after the LINCS projection; each iteration further tightens constraint satisfaction.",
+   "mdp_key": "lincs-iter",
+   "type": "int",
+   "unit": "iterations",
+   "default": "1",
+   "options": [],
+   "range": "1 to 4",
+   "applies_to": [
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "lincs-order",
+    "dt",
+    "integrator"
+   ],
+   "cost_impact": "Each extra iteration adds roughly the cost of one more LINCS pass; still typically <2% of the step. Negligible.",
+   "agent_guidance": "1 is fine for standard 2 fs h-bonds MD. Set to 2 together with lincs-order=6 for HMR/4 fs, for the sd integrator, for energy-conservation-critical NVE runs, and as the first remedy for LINCS warnings that appear without any other sign of instability (i.e. the system is not exploding, the constraints are just slightly loose).",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "lincs-warnangle",
+   "area": "integrator_and_timestep",
+   "label": "LINCS warning angle",
+   "meaning": "The angle a constrained bond may rotate in one step before GROMACS prints a LINCS warning to the log; it is a diagnostic threshold, not a physical parameter.",
+   "mdp_key": "lincs-warnangle",
+   "type": "float",
+   "unit": "degrees",
+   "default": "30",
+   "options": [],
+   "range": "0 to 180",
+   "applies_to": [
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "dt",
+    "constraints"
+   ],
+   "cost_impact": "none",
+   "agent_guidance": "Never raise this to silence warnings \u2014 that is the single most destructive 'fix' an agent can apply, because LINCS warnings are the early-warning signal that dt is too large or the structure has a clash. Leave at 30. Treat any LINCS warning in the log as an actionable event: parse the mdrun log for 'LINCS WARNING' and respond by lowering dt / increasing lincs-order+lincs-iter / re-minimizing. Only lower it (e.g. to 15) if you want an even more sensitive tripwire during an aggressive-timestep validation run.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "shake-tol",
+   "area": "integrator_and_timestep",
+   "label": "SHAKE tolerance",
+   "meaning": "Relative tolerance to which SHAKE iterates each constraint length; smaller = tighter constraints and more iterations.",
+   "mdp_key": "shake-tol",
+   "type": "float",
+   "unit": "relative (dimensionless)",
+   "default": "0.0001",
+   "options": [],
+   "range": "1e-8 to 1e-3",
+   "applies_to": [
+    "solvent",
+    "protein"
+   ],
+   "depends_on": [
+    "constraint-algorithm = SHAKE"
+   ],
+   "cost_impact": "Tightening from 1e-4 to 1e-6 can double the SHAKE iteration count; irrelevant unless SHAKE is in use.",
+   "agent_guidance": "Only relevant when constraint-algorithm=SHAKE. Leave at 1e-4 for normal MD; tighten to 1e-6 for energy-conservation studies (NVE drift measurement). If you are on LINCS (you should be), ignore this key entirely and do not emit it.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "mass-repartition-factor",
+   "area": "integrator_and_timestep",
+   "label": "Hydrogen mass repartitioning (HMR) factor",
+   "meaning": "Multiplies the mass of every hydrogen by this factor and subtracts the added mass from the heavy atom it is bonded to, slowing the fastest remaining (angular/librational) hydrogen motions so the timestep can be doubled without changing equilibrium thermodynamics.",
+   "mdp_key": "mass-repartition-factor (grompp does the repartitioning)",
+   "type": "float",
+   "unit": "dimensionless (mass multiplier on H)",
+   "default": "1",
+   "options": [],
+   "range": "1 to 5 (1 = off; 3 is the validated production value; >4 measurably distorts dynamics)",
+   "applies_to": [
+    "protein",
+    "solvent",
+    "membrane"
+   ],
+   "depends_on": [
+    "dt (this is the whole point)",
+    "constraints (must be at least h-bonds)",
+    "water model (water masses are NOT repartitioned \u2014 rigid water is already fine)",
+    "any kinetic observable being measured"
+   ],
+   "cost_impact": "Free at the per-step level; it is a pure 2x throughput win because it lets dt go 2 fs -> 4 fs. This is the highest-value single change an agent can make to fit a long run into a GPU budget.",
+   "agent_guidance": "Set mass-repartition-factor=3 together with constraints=h-bonds and dt=0.004 whenever the user asks for a long atomistic run (>= 10 ns) and cares about equilibrium/structural observables: RMSD, RMSF, radius of gyration, hydrogen-bond occupancy, contacts, free energies, 'does it stay folded'. Equilibrium averages are provably unchanged by HMR (masses do not enter the configurational partition function). DO NOT use HMR when the observable is a dynamical/transport quantity: diffusion coefficients from MSD, viscosity, rotational correlation times, NMR relaxation, kinetics/rates \u2014 mass changes rescale those. Also do not apply it to the bare LJ fluid (no hydrogens) or to Martini (no hydrogens). Validate a new HMR setup with a short 1 ns test: if the temperature is stable, LINCS is quiet, and the pressure/density match the non-HMR run, promote it to production.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "continuation",
+   "area": "integrator_and_timestep",
+   "label": "Continuation (constrain initial state?)",
+   "meaning": "Tells GROMACS whether the input coordinates/velocities already satisfy the bond constraints and thus whether it should skip the initial constraining step and the initial constraint of velocities.",
+   "mdp_key": "continuation (yes|no) \u2014 formerly 'unconstrained-start'",
+   "type": "bool",
+   "unit": "yes/no",
+   "default": "no",
+   "options": [
+    "no",
+    "yes"
+   ],
+   "range": "boolean",
+   "applies_to": [
+    "solvent",
+    "membrane",
+    "protein",
+    "fluid"
+   ],
+   "depends_on": [
+    "gen-vel",
+    "whether this stage is the first after EM or a continuation of a previous MD stage",
+    "constraints"
+   ],
+   "cost_impact": "none",
+   "agent_guidance": "The rule is simple and mechanical: continuation = no in the FIRST dynamics stage after energy minimization (the minimized coordinates do not satisfy constraints exactly and there are no velocities), and continuation = yes in EVERY subsequent stage that reads velocities from the previous stage's .gro/.cpt. It is always paired with gen-vel: (gen-vel=yes, continuation=no) for the first NVT stage; (gen-vel=no, continuation=yes) for NPT and production. Getting this wrong (continuation=yes on a fresh EM structure) can produce a small unphysical energy kick; getting the pair wrong the other way (gen-vel=yes on production) silently throws away all your equilibration \u2014 this is the single most common protocol bug and the current lab hardcodes it wrong.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "gen-vel",
+   "area": "integrator_and_timestep",
+   "label": "Generate initial velocities",
+   "meaning": "Whether to draw fresh atomic velocities from a Maxwell-Boltzmann distribution at gen-temp instead of reading velocities from the input structure.",
+   "mdp_key": "gen-vel (yes|no)",
+   "type": "bool",
+   "unit": "yes/no",
+   "default": "yes",
+   "options": [
+    "yes",
+    "no"
+   ],
+   "range": "boolean",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "continuation (mutually exclusive: gen-vel=yes implies continuation=no)",
+    "gen-temp",
+    "gen-seed",
+    "stage"
+   ],
+   "cost_impact": "none",
+   "agent_guidance": "gen-vel = yes ONLY in the first dynamics stage after minimization (typically the restrained NVT heating stage). Set gen-vel = no (with continuation = yes) in the NPT equilibration and in production, so that the equilibrated velocities carry over. The current lab hardcodes gen-vel=yes in every MD stage, which means every 'production' run is actually a fresh cold start \u2014 an agent must fix this to get valid equilibrated ensembles. gen-vel=yes is also the right choice when deliberately launching multiple independent replicas from the same equilibrated structure: set gen-vel=yes with different gen-seed values per replica to decorrelate them.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "gen-temp",
+   "area": "integrator_and_timestep",
+   "label": "Velocity generation temperature",
+   "meaning": "The temperature of the Maxwell-Boltzmann distribution used when gen-vel=yes.",
+   "mdp_key": "gen-temp (K)",
+   "type": "float",
+   "unit": "K",
+   "default": "300",
+   "options": [],
+   "range": "1 to 1000 K",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "gen-vel = yes",
+    "ref-t (target thermostat temperature)"
+   ],
+   "cost_impact": "none",
+   "agent_guidance": "Set gen-temp = ref-t of the production stage (e.g. 310 K for a physiological lysozyme run, 87-100 K for liquid argon, 300-323 K for a Martini POPC bilayer, 298 K for a water/NaCl box). Only deviate by generating at a lower temperature (e.g. 100 K) if you are doing an explicit slow-heating annealing protocol, in which case use the annealing keys rather than gen-temp. Never leave gen-temp at 300 while ref-t is 310 \u2014 it works, but it is sloppy and the thermostat has to do avoidable work in the first picoseconds.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "gen-seed",
+   "area": "integrator_and_timestep",
+   "label": "Velocity generation seed",
+   "meaning": "The pseudo-random seed for the Maxwell-Boltzmann velocity draw; -1 means GROMACS picks a fresh pseudo-random seed, which makes the run irreproducible.",
+   "mdp_key": "gen-seed",
+   "type": "int",
+   "unit": "dimensionless",
+   "default": "-1",
+   "options": [],
+   "range": "-1 (random) or 0 to 2147483647",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "gen-vel = yes"
+   ],
+   "cost_impact": "none",
+   "agent_guidance": "ALWAYS resolve -1 to a concrete integer at plan time and record it in the run manifest \u2014 otherwise no run in this lab is reproducible and no self-correction loop can distinguish 'my parameter change helped' from 'I got a different random seed'. Policy: if the user did not specify a seed, draw one (e.g. from the run id), write the explicit value into the .mdp, and report it. Use DIFFERENT seeds deliberately when generating independent replicas for statistics (3-5 replicas is standard for RMSD/RMSF error bars); use the SAME seed when A/B-testing a parameter change (cutoff, thermostat, HMR) so the comparison is controlled.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "ld-seed",
+   "area": "integrator_and_timestep",
+   "label": "Langevin/stochastic dynamics seed",
+   "meaning": "The pseudo-random seed for the stochastic force stream used by the sd and bd integrators and by the V-rescale and Andersen thermostats; -1 means a fresh random seed each run.",
+   "mdp_key": "ld-seed",
+   "type": "int",
+   "unit": "dimensionless",
+   "default": "-1",
+   "options": [],
+   "range": "-1 (random) or 0 to 2147483647",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "integrator = sd or bd",
+    "tcoupl = V-rescale / Andersen (V-rescale also consumes ld-seed)"
+   ],
+   "cost_impact": "none",
+   "agent_guidance": "Same policy as gen-seed: never leave at -1. Because the default thermostat here is V-rescale (which is stochastic), ld-seed affects the trajectory even with integrator=md \u2014 so a run is NOT reproducible just because gen-seed is fixed. Fix BOTH gen-seed and ld-seed, and store both in the manifest. Note that bitwise reproducibility across different GPU/thread counts is still not guaranteed in GROMACS; seeds give statistical reproducibility, not bit-for-bit.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "bd-fric",
+   "area": "integrator_and_timestep",
+   "label": "Brownian dynamics friction coefficient",
+   "meaning": "The friction coefficient for the bd (Brownian/position-Langevin) integrator; if 0, the friction is derived per-atom from mass/tau-t.",
+   "mdp_key": "bd-fric (amu ps^-1)",
+   "type": "float",
+   "unit": "amu ps^-1",
+   "default": "0",
+   "options": [],
+   "range": "0 to 1000 (0 = use mass/tau-t)",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "protein"
+   ],
+   "depends_on": [
+    "integrator = bd",
+    "tau-t"
+   ],
+   "cost_impact": "none",
+   "agent_guidance": "Only meaningful with integrator=bd, which you should essentially never select for this lab. Leave at 0 (derive friction from mass/tau-t) if bd is ever used. Emit this key only when integrator=bd.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "comm-mode",
+   "area": "integrator_and_timestep",
+   "label": "Center-of-mass motion removal mode",
+   "meaning": "Removes the accumulating net translation (and optionally rotation) of the system, which would otherwise steal kinetic energy from the thermostat and produce the 'flying ice cube' artefact.",
+   "mdp_key": "comm-mode (Linear | Angular | Linear-acceleration-correction | None)",
+   "type": "choice",
+   "unit": "dimensionless",
+   "default": "Linear",
+   "options": [
+    "Linear",
+    "Angular",
+    "Linear-acceleration-correction",
+    "None"
+   ],
+   "range": "enumerated",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "pbc (Angular is only valid with pbc=no, i.e. vacuum/implicit-solvent)",
+    "integrator (sd already damps COM drift, but removal is still recommended)",
+    "comm-grps",
+    "nstcomm"
+   ],
+   "cost_impact": "negligible",
+   "agent_guidance": "Use 'Linear' for every periodic system (all GROMACS recipes here). Use 'Angular' ONLY for non-periodic systems \u2014 i.e. the OpenMM implicit-solvent / vacuum track \u2014 where the whole molecule can also spin; using Angular with pbc=xyz is an error grompp will reject. Use 'None' only for a deliberate NVE energy-conservation test or when using position restraints/freeze groups that already pin the system (with -DPOSRES, COM removal is harmless but redundant). Also switch to 'Linear-acceleration-correction' when you apply an external acceleration/pull force. Symptom to watch for: a stable reported temperature but a solute that visibly drifts across the box and internal motion that looks frozen -> COM removal is missing or is being applied to the wrong group.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "nstcomm",
+   "area": "integrator_and_timestep",
+   "label": "COM-removal frequency",
+   "meaning": "How often (in steps) the center-of-mass motion is removed.",
+   "mdp_key": "nstcomm",
+   "type": "int",
+   "unit": "steps",
+   "default": "100",
+   "options": [],
+   "range": "1 to 1000",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "comm-mode != None",
+    "nstcalcenergy (GROMACS rounds nstcomm to a multiple of it)",
+    "dt"
+   ],
+   "cost_impact": "negligible; more frequent removal costs a global reduction each time.",
+   "agent_guidance": "Leave at 100 (the GROMACS default). Only lower it (to 10) if you observe COM drift building up between removals \u2014 rare. Do not set it to 1 'to be safe'; frequent global reductions hurt GPU-resident stepping.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "comm-grps",
+   "area": "integrator_and_timestep",
+   "label": "COM-removal groups",
+   "meaning": "Which index groups have their center-of-mass motion removed separately; removing COM motion separately for solute and solvent is a known artefact source, not a feature.",
+   "mdp_key": "comm-grps",
+   "type": "string",
+   "unit": "index group name(s)",
+   "default": "System",
+   "options": [
+    "System",
+    "Protein Non-Protein (discouraged)",
+    "custom index groups"
+   ],
+   "range": "must name valid groups from the default index or a supplied .ndx",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "comm-mode",
+    "index file"
+   ],
+   "cost_impact": "negligible",
+   "agent_guidance": "Keep 'System' (whole system as one COM group). Do NOT mirror tc-grps here: removing COM motion separately for 'Protein' and 'Non-Protein' suppresses real solute translational diffusion and is a documented artefact. The only legitimate multi-group case is a system with two physically decoupled compartments (e.g. two independent slabs separated by vacuum).",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "emtol",
+   "area": "integrator_and_timestep",
+   "label": "Minimization force tolerance",
+   "meaning": "Energy minimization stops when the maximum force on any atom falls below this value; it is the convergence criterion, and steep exiting on nsteps instead of on emtol means the structure is still strained.",
+   "mdp_key": "emtol (kJ mol^-1 nm^-1)",
+   "type": "float",
+   "unit": "kJ mol^-1 nm^-1",
+   "default": "1000",
+   "options": [],
+   "range": "1 to 5000",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "integrator in {steep, cg, l-bfgs}",
+    "system class (Martini tolerates/needs a tighter value)",
+    "quality of the initial structure"
+   ],
+   "cost_impact": "Lowering emtol increases the number of minimization steps, but EM is a tiny fraction of any real run's cost. Cheap.",
+   "agent_guidance": "1000 kJ/mol/nm is the standard atomistic target and is enough to start MD safely. Use 100 for Martini (the current martini_em_mdp already does) and for any structure you are about to hand to a QM or normal-mode calculation use 10 or lower with a cg/l-bfgs second pass. ALWAYS check the mdrun output: if it reports 'Steepest Descents did not converge to Fmax < emtol in N steps' AND the final Fmax is >> emtol (say > 1e4), do not proceed \u2014 the build has a clash or a bad ion placement; re-examine solvation/genion. If Fmax merely sits at ~1200 against a 1000 target, it is safe to proceed to a restrained NVT stage.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "emstep",
+   "area": "integrator_and_timestep",
+   "label": "Minimization initial step size",
+   "meaning": "The initial trial displacement used by the steepest-descent minimizer; it is adapted automatically, so it only sets the starting scale.",
+   "mdp_key": "emstep (nm)",
+   "type": "float",
+   "unit": "nm",
+   "default": "0.01",
+   "options": [],
+   "range": "0.001 to 0.05",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "integrator = steep",
+    "system class (CG particles are larger, tolerate bigger steps)"
+   ],
+   "cost_impact": "Only affects how quickly EM converges; negligible on total cost.",
+   "agent_guidance": "Leave at 0.01 nm for atomistic systems; use 0.02 nm for Martini (as the existing Martini EM does). Lower it to 0.001 nm if steepest descents immediately reports rising energy or diverges on a structure with severe overlaps \u2014 but the better fix for severe overlaps is a better build (larger box, -scale on genbox, or a short soft-core/position-restrained pass).",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "em-max-steps",
+   "area": "integrator_and_timestep",
+   "label": "Minimization step cap",
+   "meaning": "The maximum number of minimization iterations before EM gives up regardless of emtol (this is simply `nsteps` inside a minimization stage).",
+   "mdp_key": "nsteps (in a stage whose integrator is steep/cg/l-bfgs)",
+   "type": "int",
+   "unit": "steps",
+   "default": "50000",
+   "options": [],
+   "range": "100 to 500000",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "integrator in {steep, cg, l-bfgs}",
+    "emtol"
+   ],
+   "cost_impact": "EM is seconds-to-minutes; this cap is effectively free. Do not economize here.",
+   "agent_guidance": "50000 for atomistic (converges in a few thousand typically), 5000 for Martini. Exposed separately from the production nsteps so that a multi-stage plan can carry both. Treat 'hit the cap' as a diagnostic, not a success \u2014 see emtol guidance.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "timestep_policy",
+   "area": "integrator_and_timestep",
+   "label": "Timestep policy (logical bundle)",
+   "meaning": "A single high-level choice that consistently sets the coupled triple (constraints, mass-repartition-factor, dt) so an agent cannot construct a physically invalid combination.",
+   "mdp_key": "dt + constraints + mass-repartition-factor (+ lincs-order/lincs-iter)",
+   "type": "choice",
+   "unit": "dimensionless",
+   "default": "standard",
+   "options": [
+    "exact",
+    "standard",
+    "hmr",
+    "aggressive",
+    "cg-martini",
+    "lj-fluid"
+   ],
+   "range": "enumerated",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "system class",
+    "force field",
+    "observable (dynamical vs structural)",
+    "GPU budget"
+   ],
+   "cost_impact": "exact = 4x cost of standard; standard = baseline; hmr = 0.5x; aggressive = 0.4x; cg-martini = ~0.1x per unit physical time relative to atomistic. This is the main cost dial.",
+   "agent_guidance": "Resolve to concrete keys as follows. 'exact': constraints=none, mass-repartition-factor=1, dt=0.0005 \u2014 use only for NVE energy-conservation validation or when the force field demands flexible bonds. 'standard': constraints=h-bonds, mass-repartition-factor=1, dt=0.002, lincs-order=4, lincs-iter=1 \u2014 the default for every atomistic protein/solvent/ion system and the only choice when measuring diffusion/kinetics. 'hmr': constraints=h-bonds, mass-repartition-factor=3, dt=0.004, lincs-order=6, lincs-iter=2 \u2014 pick this whenever the user wants >= 10 ns of atomistic simulation AND the observables are structural/thermodynamic (RMSD, RMSF, Rg, contacts, H-bonds, 'stays folded'); it halves the GPU budget for free. 'aggressive': constraints=h-angles, mass-repartition-factor=3-4, dt=0.005, lincs-order=8, lincs-iter=2 \u2014 only after a validated 1 ns test, never by default. 'cg-martini': constraints=none (bonds are constraints in the itp), dt=0.02, no HMR \u2014 the only correct policy for the Martini bilayer. 'lj-fluid': constraints=none, dt=0.005 \u2014 for lj_argon, which has no bonds at all. Always report the resolved (dt, constraints, HMR, expected ns/day) back to the user with the plan.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "cutoff-scheme",
+   "area": "electrostatics_and_cutoffs",
+   "label": "Cut-off scheme",
+   "meaning": "Selects how the short-range neighbour list and cut-off are built; Verlet uses a buffered pair list with exact, conservative energy behaviour and is the only GPU-capable and only supported scheme in modern GROMACS.",
+   "mdp_key": "cutoff-scheme | OpenMM: implicit (always Verlet-equivalent)",
+   "type": "choice",
+   "unit": "none",
+   "default": "Verlet",
+   "options": [
+    "Verlet",
+    "group"
+   ],
+   "range": "Verlet only (group removed in GROMACS >= 2020)",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "verlet-buffer-tolerance",
+    "nstlist",
+    "rlist"
+   ],
+   "cost_impact": "Verlet is the fast path (GPU nonbonded kernels). No alternative on this build; setting anything else fails grompp.",
+   "agent_guidance": "Never change. Always emit Verlet. If a legacy recipe or user asks for 'group', refuse and explain it was removed; the correct modern equivalent is Verlet with vdw-modifier=potential-shift.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "coulombtype",
+   "area": "electrostatics_and_cutoffs",
+   "label": "Electrostatics treatment",
+   "meaning": "Chooses how long-range Coulomb interactions beyond rcoulomb are handled: PME sums them exactly in reciprocal space, Reaction-Field approximates them with a dielectric continuum, and Cut-off simply truncates them.",
+   "mdp_key": "coulombtype | OpenMM: NonbondedForce",
+   "type": "choice",
+   "unit": "none",
+   "default": "PME",
+   "options": [
+    "PME",
+    "Reaction-Field",
+    "Cut-off",
+    "PME-User",
+    "Ewald",
+    "P3M-AD"
+   ],
+   "range": "PME | Reaction-Field | Cut-off (others are expert/legacy)",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "force_field",
+    "epsilon_rf",
+    "epsilon_r",
+    "rcoulomb",
+    "fourierspacing",
+    "pbc"
+   ],
+   "cost_impact": "PME adds a 3D FFT: typically 15-30% of step time on CPU, ~5-15% if offloaded to GPU (mdrun -pme gpu). Reaction-Field / Cut-off have zero reciprocal-space cost and scale better, and are ~1.2-1.5x faster overall. Ewald (non-mesh) is O(N^1.5) and unusable above ~1000 atoms.",
+   "agent_guidance": "Use PME for ANY charged/polar atomistic system (protein, water, ions, atomistic lipids) \u2014 this is non-negotiable for publishable results; truncated electrostatics produce artefactual ion pairing and protein structure. Use Reaction-Field ONLY for Martini coarse-grained systems (with epsilon_r=15, epsilon_rf=0, rcoulomb=1.1) \u2014 that is the parameterised, validated Martini 3 setting. Use Cut-off ONLY for a neutral, non-polar system such as LJ argon, where it is exactly correct and cheapest. Never use PME with pbc=no. If a user complains a Martini bilayer is slow, do not switch it to PME; if a user complains an atomistic protein 'drifts' or salt-bridges over-form, check that coulombtype=PME.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "rcoulomb",
+   "area": "electrostatics_and_cutoffs",
+   "label": "Coulomb cut-off radius",
+   "meaning": "The distance at which the real-space part of the electrostatic interaction is truncated; with PME this only splits work between real and reciprocal space (accuracy is preserved), while with Reaction-Field/Cut-off it is a true physical truncation.",
+   "mdp_key": "rcoulomb | OpenMM: NonbondedForce",
+   "type": "float",
+   "unit": "nm",
+   "default": "1.0",
+   "options": [],
+   "range": "0.8 - 1.4 (hard: > 0; must satisfy the minimum-image constraint, see box_min_dim)",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "force_field",
+    "coulombtype",
+    "rvdw",
+    "box_min_dim",
+    "verlet-buffer-tolerance",
+    "ewald-rtol"
+   ],
+   "cost_impact": "With PME, real-space pair count scales as rcoulomb^3 but larger rcoulomb lets you use a coarser PME grid \u2014 near-flat trade-off, with a shallow optimum around 1.0-1.2 nm on GPU (GPU prefers slightly LARGER rcoulomb, which moves work off the FFT and onto the fast nonbonded kernel). With Reaction-Field/Cut-off, cost is strictly ~rcoulomb^3: 1.4 nm costs ~2.7x the pairs of 1.0 nm.",
+   "agent_guidance": "Set from the force field, not from taste: AMBER (amber99sb-ildn, amber14sb) -> 1.0; CHARMM36 -> 1.2; OPLS-AA -> 1.0-1.2; GROMOS -> 1.4; Martini 3 -> 1.1. Keep rcoulomb == rvdw for all Verlet-scheme atomistic runs (GROMACS requires rcoulomb >= rvdw and the GPU kernel is fastest when they are equal). Never lower rcoulomb below the force field's value to save time \u2014 that changes the parameterisation. If mdrun/grompp errors 'cut-off longer than half the shortest box vector', enlarge the box, do NOT shrink rcoulomb. On the GB10 GPU, if PME is the bottleneck, raise rcoulomb (with rvdw) to 1.2 and coarsen fourierspacing proportionally rather than tuning blindly.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "rvdw",
+   "area": "electrostatics_and_cutoffs",
+   "label": "Van der Waals cut-off radius",
+   "meaning": "The distance beyond which the Lennard-Jones interaction is truncated (and, depending on vdw-modifier, shifted or switched to zero); it is a genuine physical truncation because plain LJ has no reciprocal-space correction.",
+   "mdp_key": "rvdw | OpenMM: NonbondedForce cutoff (shared)",
+   "type": "float",
+   "unit": "nm",
+   "default": "1.0",
+   "options": [],
+   "range": "0.8 - 1.4 (hard: > 0; must satisfy minimum-image constraint)",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "force_field",
+    "vdwtype",
+    "vdw-modifier",
+    "rvdw-switch",
+    "DispCorr",
+    "rcoulomb",
+    "box_min_dim"
+   ],
+   "cost_impact": "Real-space pair count ~rvdw^3 and it sets the neighbour-list radius floor; going 1.0 -> 1.2 nm costs roughly 1.5-1.7x nonbonded pairs (~20-40% wall-clock on GPU). Cheapest single knob that is nonetheless force-field-locked.",
+   "agent_guidance": "Force-field-locked, exactly like rcoulomb: AMBER 1.0 (with DispCorr=EnerPres), CHARMM36 1.2 with vdw-modifier=force-switch and rvdw-switch=1.0 and DispCorr=no, OPLS-AA 1.0-1.2, GROMOS 1.4, Martini 3 1.1 with potential-shift. Keep rvdw == rcoulomb. Do not tune rvdw for performance; if the run is too slow, reduce system size (rhombic dodecahedron box) or offload to GPU instead. A rvdw mismatched with the force field silently shifts density and surface tension \u2014 a bilayer built with a wrong rvdw will have the wrong area-per-lipid.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "vdwtype",
+   "area": "electrostatics_and_cutoffs",
+   "label": "Van der Waals interaction type",
+   "meaning": "Selects the functional form used to bring the LJ interaction to zero at the cut-off: plain cut-off (combined with vdw-modifier), an explicit switch/shift function, or LJ-PME which treats dispersion with a lattice sum.",
+   "mdp_key": "vdwtype",
+   "type": "choice",
+   "unit": "none",
+   "default": "Cut-off",
+   "options": [
+    "Cut-off",
+    "PME",
+    "Shift",
+    "Switch",
+    "User"
+   ],
+   "range": "Cut-off | PME (LJ-PME); Shift/Switch are legacy \u2014 prefer vdw-modifier=force-switch/potential-switch with vdwtype=Cut-off",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "force_field",
+    "vdw-modifier",
+    "rvdw-switch",
+    "ewald-rtol-lj",
+    "lj-pme-comb-rule"
+   ],
+   "cost_impact": "Cut-off is the fast, GPU-native path. vdwtype=PME (LJ-PME) adds a second FFT and costs an extra 20-40% and is not always GPU-accelerated. Shift/Switch add a modest per-pair cost.",
+   "agent_guidance": "Use Cut-off for essentially everything, and express CHARMM's force-switch through vdw-modifier (NOT through the legacy vdwtype=Switch). Only use vdwtype=PME when the force field was explicitly parameterised with LJ-PME (rare; some lipid/surface-tension work) or when the user is chasing dispersion-truncation artefacts in an interfacial system and DispCorr is inapplicable \u2014 and warn them about the cost.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "vdw-modifier",
+   "area": "electrostatics_and_cutoffs",
+   "label": "LJ potential modifier",
+   "meaning": "Defines how the LJ potential/force is smoothly brought to zero at the cut-off: potential-shift adds a constant so the potential is continuous, force-switch smoothly ramps the FORCE to zero between rvdw-switch and rvdw (which CHARMM was parameterised with), and none leaves a truncation discontinuity that heats the system.",
+   "mdp_key": "vdw-modifier",
+   "type": "choice",
+   "unit": "none",
+   "default": "Potential-shift-Verlet",
+   "options": [
+    "Potential-shift-Verlet",
+    "Potential-shift",
+    "Force-switch",
+    "Potential-switch",
+    "None"
+   ],
+   "range": "one of the listed options",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "force_field",
+    "vdwtype",
+    "rvdw-switch",
+    "rvdw",
+    "DispCorr"
+   ],
+   "cost_impact": "Negligible (a few percent). Force-switch/potential-switch are slightly slower per pair than potential-shift and can disable some fused GPU kernels.",
+   "agent_guidance": "AMBER/OPLS/GROMOS -> Potential-shift-Verlet (with DispCorr=EnerPres). CHARMM36 -> Force-switch with rvdw-switch=1.0, rvdw=1.2 and DispCorr=no; this is mandatory, a CHARMM run with potential-shift + DispCorr gives wrong lipid areas and is a known reviewer-rejection. Martini 3 -> Potential-shift-Verlet. Never use None: the resulting force discontinuity injects energy every time a pair crosses the cut-off and the thermostat then hides it.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "rvdw-switch",
+   "area": "electrostatics_and_cutoffs",
+   "label": "LJ switching start radius",
+   "meaning": "The distance at which the force-switch or potential-switch function begins to taper the LJ interaction toward zero at rvdw; the interaction is unmodified below it.",
+   "mdp_key": "rvdw-switch",
+   "type": "float",
+   "unit": "nm",
+   "default": "0",
+   "options": [],
+   "range": "0 - rvdw (typical 0.8-1.0 when used; must be < rvdw)",
+   "applies_to": [
+    "solvent",
+    "membrane",
+    "protein",
+    "fluid"
+   ],
+   "depends_on": [
+    "vdw-modifier",
+    "rvdw"
+   ],
+   "cost_impact": "None directly. A very narrow switching window (rvdw - rvdw-switch < 0.1 nm) produces large switching forces and can require a smaller timestep.",
+   "agent_guidance": "Only meaningful when vdw-modifier is Force-switch or Potential-switch; leave at 0 otherwise (GROMACS ignores it). For CHARMM36 set exactly 1.0 nm with rvdw=1.2 nm. Do not invent other values \u2014 the switching window is part of the force-field parameterisation.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "coulomb-modifier",
+   "area": "electrostatics_and_cutoffs",
+   "label": "Coulomb potential modifier",
+   "meaning": "Shifts the real-space Coulomb potential so it is continuous (zero) at rcoulomb, removing the truncation jump in the potential without changing forces.",
+   "mdp_key": "coulomb-modifier",
+   "type": "choice",
+   "unit": "none",
+   "default": "Potential-shift-Verlet",
+   "options": [
+    "Potential-shift-Verlet",
+    "Potential-shift",
+    "None"
+   ],
+   "range": "one of the listed options",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "coulombtype",
+    "cutoff-scheme"
+   ],
+   "cost_impact": "None.",
+   "agent_guidance": "Leave at the default (Potential-shift-Verlet) in all cases. It affects only the reported potential energy offset, not dynamics. Do not expose this to the user; emit it implicitly.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "rlist",
+   "area": "electrostatics_and_cutoffs",
+   "label": "Neighbour-list cut-off",
+   "meaning": "The radius of the pair list; it must exceed max(rcoulomb, rvdw) by a buffer large enough that no pair can diffuse inside the interaction cut-off between list rebuilds.",
+   "mdp_key": "rlist",
+   "type": "float",
+   "unit": "nm",
+   "default": "auto (set by verlet-buffer-tolerance)",
+   "options": [],
+   "range": ">= max(rcoulomb, rvdw); must satisfy the minimum-image constraint",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "verlet-buffer-tolerance",
+    "nstlist",
+    "rcoulomb",
+    "rvdw",
+    "dt",
+    "temperature",
+    "box_min_dim"
+   ],
+   "cost_impact": "Pair-list build cost and memory scale as rlist^3. An over-large rlist is pure waste; an under-sized one silently misses interactions.",
+   "agent_guidance": "DO NOT SET IT MANUALLY. With cutoff-scheme=Verlet and verlet-buffer-tolerance > 0, GROMACS computes rlist from the tolerance, dt, T and nstlist, and overrides whatever you wrote (the current mdp.py hardcoding of rlist = max(rvdw,rcoulomb) is a no-op at best and a correctness hazard if the tolerance is ever set to -1). Only set rlist explicitly if verlet-buffer-tolerance = -1, i.e. you are deliberately fixing the buffer \u2014 for reproducing a published protocol. In that case use rlist >= max(rcoulomb,rvdw) + 0.1 nm for nstlist=10-20 at 300 K.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "verlet-buffer-tolerance",
+   "area": "electrostatics_and_cutoffs",
+   "label": "Verlet buffer tolerance",
+   "meaning": "The maximum tolerated energy drift per atom caused by pairs that are missed because they moved into the cut-off between neighbour-list rebuilds; GROMACS auto-sizes rlist to meet it.",
+   "mdp_key": "verlet-buffer-tolerance",
+   "type": "float",
+   "unit": "kJ/mol/ps per atom",
+   "default": "0.005",
+   "options": [],
+   "range": "1e-4 - 0.05, or -1 to disable auto-buffering and use rlist verbatim",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "cutoff-scheme",
+    "nstlist",
+    "dt",
+    "ref-t",
+    "rlist"
+   ],
+   "cost_impact": "Tightening 0.005 -> 0.0005 grows rlist by roughly 0.05-0.1 nm, costing ~10-25% more pairs. Loosening saves a little but risks drift.",
+   "agent_guidance": "Keep 0.005 (the GROMACS default, and the Martini-recommended value) for thermostatted production runs. Tighten to <= 0.001 only for NVE / energy-conservation studies or when the user reports total-energy drift. Set -1 only when reproducing a legacy protocol that pins rlist. Note it is IGNORED during energy minimisation (integrator=steep), so do not bother emitting it there.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "nstlist",
+   "area": "electrostatics_and_cutoffs",
+   "label": "Neighbour-list update frequency",
+   "meaning": "How many integration steps elapse between rebuilds of the pair list; larger values amortise the list-build cost but force a larger buffer (rlist) to stay accurate.",
+   "mdp_key": "nstlist | OpenMM: not user-facing",
+   "type": "int",
+   "unit": "steps",
+   "default": "20",
+   "options": [],
+   "range": "0 - 200 (typical 10 CPU, 20-100 GPU; 0 = never update, only valid with an infinite cut-off)",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "verlet-buffer-tolerance",
+    "rlist",
+    "dt",
+    "gpu_offload"
+   ],
+   "cost_impact": "The single most effective safe performance knob on GPU. mdrun will silently INCREASE nstlist (typically to 80-100) when running on GPU because list building is CPU-side; the auto-buffer keeps accuracy constant. Cost is a trade: bigger nstlist -> fewer searches but bigger rlist.",
+   "agent_guidance": "Emit 20 for GPU MD and 10 for energy minimisation, then let mdrun retune it upward (it prints 'Changing nstlist to N'). Do not hand-tune above 100. Crucially: because verlet-buffer-tolerance auto-compensates, raising nstlist does NOT reduce accuracy \u2014 so never refuse a larger nstlist on accuracy grounds while the tolerance is active. If the user pins rlist (tolerance=-1), then raising nstlist DOES degrade accuracy and you must warn.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "DispCorr",
+   "area": "electrostatics_and_cutoffs",
+   "label": "Long-range dispersion correction",
+   "meaning": "Adds an analytic mean-field estimate of the attractive LJ energy (and virial) that was lost by truncating dispersion at rvdw, assuming the system is homogeneous and isotropic beyond the cut-off.",
+   "mdp_key": "DispCorr | OpenMM: NonbondedForce",
+   "type": "choice",
+   "unit": "none",
+   "default": "EnerPres",
+   "options": [
+    "no",
+    "EnerPres",
+    "Ener",
+    "AllEnerPres",
+    "AllEner"
+   ],
+   "range": "no | EnerPres | Ener",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "protein",
+    "membrane"
+   ],
+   "depends_on": [
+    "force_field",
+    "vdw-modifier",
+    "rvdw",
+    "pcoupl",
+    "system_homogeneity"
+   ],
+   "cost_impact": "Zero (analytic scalar term).",
+   "agent_guidance": "This is a correctness switch, not a performance one, and the current hardcoded 'always EnerPres' is a real bug. Rules: (1) AMBER/OPLS/GROMOS with plain cut-off LJ -> EnerPres for NPT (needed to get liquid density right; without it water is ~1-2% too low in density) and Ener for NVT. (2) CHARMM36 with force-switch -> 'no'. CHARMM was parameterised WITH truncation; adding DispCorr over-condenses lipids and shrinks area-per-lipid. (3) Martini 3 -> 'no'. (4) Strongly inhomogeneous systems \u2014 a bilayer, a liquid/vapour interface, a droplet \u2014 violate the isotropy assumption; for an ATOMISTIC bilayer the honest choice is 'no' (and use CHARMM force-switch) or LJ-PME, never AllEnerPres. (5) LJ argon NVT -> Ener (or EnerPres if NPT).",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "epsilon_r",
+   "area": "electrostatics_and_cutoffs",
+   "label": "Relative dielectric constant",
+   "meaning": "A uniform scaling of ALL Coulomb interactions by 1/epsilon_r, used by implicit-solvent-like coarse-grained models to mimic screening by a medium that is not explicitly represented.",
+   "mdp_key": "epsilon-r (epsilon_r)",
+   "type": "float",
+   "unit": "dimensionless",
+   "default": "1",
+   "options": [],
+   "range": "1 - 80 (1 for all atomistic; 15 for Martini 3 with RF; 0 means infinite = no Coulomb)",
+   "applies_to": [
+    "membrane",
+    "fluid",
+    "solvent",
+    "protein"
+   ],
+   "depends_on": [
+    "force_field",
+    "coulombtype",
+    "epsilon_rf"
+   ],
+   "cost_impact": "Zero.",
+   "agent_guidance": "MUST be 1 for every atomistic force field with explicit solvent \u2014 any other value silently rescales every charge interaction in the system and invalidates the force field. MUST be 15 for standard Martini 3 with reaction-field (this is part of the Martini parameterisation, paired with epsilon_rf=0, rcoulomb=1.1). Use 15 also for Martini EM. If an agent sees epsilon_r != 1 on a protein-in-water run, that is a bug \u2014 flag it.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "epsilon_rf",
+   "area": "electrostatics_and_cutoffs",
+   "label": "Reaction-field dielectric constant",
+   "meaning": "The dielectric constant assumed for the continuum medium OUTSIDE the Coulomb cut-off in a reaction-field calculation; 0 is the special value meaning infinity (conducting boundary), which is what Martini uses.",
+   "mdp_key": "epsilon-rf (epsilon_rf)",
+   "type": "float",
+   "unit": "dimensionless",
+   "default": "0",
+   "options": [],
+   "range": "0 (= infinity) or >= 1 (e.g. 78-80 to mimic bulk water, 54 for SPC, 61 for TIP3P)",
+   "applies_to": [
+    "membrane",
+    "fluid",
+    "solvent"
+   ],
+   "depends_on": [
+    "coulombtype",
+    "epsilon_r",
+    "rcoulomb"
+   ],
+   "cost_impact": "Zero.",
+   "agent_guidance": "Only read when coulombtype=Reaction-Field (ignored under PME \u2014 do not emit it into a PME mdp, it only confuses provenance). For Martini 3 set 0 (infinite). For an atomistic RF run (rare; only if the user explicitly wants RF, e.g. reproducing an old GROMOS protocol) set epsilon_rf to the dielectric constant of the solvent model, e.g. 61 for TIP3P, 78 for a generic aqueous system, and keep epsilon_r=1. Never leave epsilon_rf at 1 with RF \u2014 that models a vacuum outside the cut-off and produces spurious ion pairing.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "fourierspacing",
+   "area": "electrostatics_and_cutoffs",
+   "label": "PME grid spacing",
+   "meaning": "The maximum allowed spacing of the reciprocal-space FFT grid; grompp converts it into fourier-nx/ny/nz using the box vectors, so it is the single accuracy/cost knob for the long-range part of PME.",
+   "mdp_key": "fourierspacing",
+   "type": "float",
+   "unit": "nm",
+   "default": "0.12",
+   "options": [],
+   "range": "0.08 - 0.16 (0.10-0.12 standard; > 0.15 degrades forces noticeably)",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "coulombtype",
+    "pme-order",
+    "ewald-rtol",
+    "box",
+    "gpu_offload"
+   ],
+   "cost_impact": "FFT work scales as ~1/spacing^3. Going 0.12 -> 0.10 nm costs ~1.7x the grid points (typically +5-15% wall-clock); coarsening to 0.14 with a larger rcoulomb can be a net win on GPU. mdrun -tunepme automatically rebalances rcoulomb/grid at runtime on CPU-PME runs.",
+   "agent_guidance": "Emit 0.12 by default; it is the accepted standard for AMBER/CHARMM/OPLS protein simulations and is what almost every published protocol uses. Only tighten to 0.10 for free-energy or high-accuracy electrostatics work. IMPORTANT: PME accuracy is a JOINT property of rcoulomb, fourierspacing, pme-order and ewald-rtol \u2014 do not coarsen the grid without raising rcoulomb. Never emit fourierspacing for a Reaction-Field or Cut-off run. Note grompp rounds the grid up to an FFT-friendly size (radix 2/3/5/7), so a spacing change may have no effect at all on a small box.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "fourier-nx/ny/nz",
+   "area": "electrostatics_and_cutoffs",
+   "label": "Explicit PME grid dimensions",
+   "meaning": "The explicit number of FFT grid points along each box vector, overriding fourierspacing when non-zero.",
+   "mdp_key": "fourier-nx, fourier-ny, fourier-nz",
+   "type": "int",
+   "unit": "grid points",
+   "default": "0 (auto from fourierspacing)",
+   "options": [],
+   "range": "0 (auto) or >= 4; should be a product of small primes (2,3,5,7) for FFT efficiency",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "fourierspacing",
+    "coulombtype",
+    "box"
+   ],
+   "cost_impact": "Directly sets FFT cost, ~nx*ny*nz*log(N). A non-FFT-friendly size (e.g. a prime like 53) can cost 2x the time of the next friendly size.",
+   "agent_guidance": "Leave at 0 and let fourierspacing drive it \u2014 this is the safe default and it adapts automatically when the box changes under NPT. Set explicit values ONLY when reproducing a specific published protocol, or when the box is fixed (NVT) and you have benchmarked a specific grid. If you set them, never let them fall below box_length/0.15 nm. Warn that explicit grids do not follow an NPT box that shrinks, so accuracy silently improves/degrades.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "pme-order",
+   "area": "electrostatics_and_cutoffs",
+   "label": "PME interpolation order",
+   "meaning": "The order of the B-spline interpolation used to spread charges onto the PME grid; higher order gives a more accurate reciprocal-space force for a given grid spacing.",
+   "mdp_key": "pme-order",
+   "type": "int",
+   "unit": "dimensionless",
+   "default": "4",
+   "options": [
+    "4",
+    "6",
+    "8",
+    "10"
+   ],
+   "range": "4 - 12 (4 = cubic, standard; must be even)",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "coulombtype",
+    "fourierspacing"
+   ],
+   "cost_impact": "Spreading/gathering cost scales as order^3: going 4 -> 6 costs ~3.4x the spread work (5-15% wall-clock) and increases MPI halo width. GPU PME supports order 4 only in many builds \u2014 higher orders can silently force PME back to the CPU, a 2-5x regression.",
+   "agent_guidance": "Keep 4. The pairing (pme-order=4, fourierspacing=0.12, ewald-rtol=1e-5) is the calibrated standard. Only raise to 6 if the user needs very accurate reciprocal forces AND cannot afford a finer grid (e.g. massively parallel runs where the FFT is the bottleneck) \u2014 and check first that PME is still GPU-resident. Never raise pme-order on this single-GPU GB10 box; finer fourierspacing is the better lever.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "ewald-rtol",
+   "area": "electrostatics_and_cutoffs",
+   "label": "Ewald real-space tolerance",
+   "meaning": "The relative strength of the real-space Coulomb interaction remaining at rcoulomb; it sets the Ewald splitting parameter beta, i.e. how the electrostatic work is divided between the real-space cut-off and the PME grid.",
+   "mdp_key": "ewald-rtol | OpenMM: NonbondedForce",
+   "type": "float",
+   "unit": "dimensionless",
+   "default": "1e-5",
+   "options": [],
+   "range": "1e-6 - 1e-4",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "coulombtype",
+    "rcoulomb",
+    "fourierspacing"
+   ],
+   "cost_impact": "Zero direct cost, but it couples the two halves of PME: a smaller (tighter) rtol makes the real-space part decay faster, allowing a shorter rcoulomb but demanding a finer grid, and vice versa.",
+   "agent_guidance": "Leave at 1e-5 \u2014 this is what every mainstream force field's reference protocol assumes and what GROMACS/AMBER/OpenMM default to. Changing it without simultaneously re-tuning rcoulomb AND fourierspacing degrades accuracy in a way that is invisible in the log. Do not expose this to a user unless they explicitly ask for PME accuracy tuning.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "ewald-rtol-lj",
+   "area": "electrostatics_and_cutoffs",
+   "label": "LJ-PME real-space tolerance",
+   "meaning": "The equivalent of ewald-rtol for the dispersion (r^-6) lattice sum, controlling the real/reciprocal split for LJ-PME.",
+   "mdp_key": "ewald-rtol-lj",
+   "type": "float",
+   "unit": "dimensionless",
+   "default": "1e-3",
+   "options": [],
+   "range": "1e-4 - 1e-2",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane"
+   ],
+   "depends_on": [
+    "vdwtype"
+   ],
+   "cost_impact": "Same coupling as ewald-rtol; negligible on its own.",
+   "agent_guidance": "Only relevant when vdwtype=PME. Leave at 1e-3. Do not emit otherwise.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "lj-pme-comb-rule",
+   "area": "electrostatics_and_cutoffs",
+   "label": "LJ-PME grid combination rule",
+   "meaning": "The combination rule used for the LJ-PME reciprocal-space grid, which may differ from the force field's real-space rule for efficiency.",
+   "mdp_key": "lj-pme-comb-rule",
+   "type": "choice",
+   "unit": "none",
+   "default": "Geometric",
+   "options": [
+    "Geometric",
+    "Lorentz-Berthelot"
+   ],
+   "range": "Geometric | Lorentz-Berthelot",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane"
+   ],
+   "depends_on": [
+    "vdwtype"
+   ],
+   "cost_impact": "Lorentz-Berthelot on the grid is substantially slower and less well supported on GPU.",
+   "agent_guidance": "Only relevant when vdwtype=PME. Keep Geometric (the real-space rule stays the force field's own; the grid error from the mismatch is corrected in real space). Do not touch.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "epsilon-surface",
+   "area": "electrostatics_and_cutoffs",
+   "label": "Ewald surface term dielectric",
+   "meaning": "Applies the Ewald surface-dipole correction, i.e. the boundary condition at infinity; 0 means tin-foil (conducting) boundary conditions, which is the standard choice.",
+   "mdp_key": "epsilon-surface",
+   "type": "float",
+   "unit": "dimensionless",
+   "default": "0",
+   "options": [],
+   "range": "0 (tin-foil) or > 0",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "protein",
+    "membrane"
+   ],
+   "depends_on": [
+    "coulombtype",
+    "ewald-geometry"
+   ],
+   "cost_impact": "Zero.",
+   "agent_guidance": "Leave 0 always. A non-zero value is incompatible with domain decomposition and is only used in exotic dipolar-boundary studies. Never set.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "ewald-geometry",
+   "area": "electrostatics_and_cutoffs",
+   "label": "Ewald geometry",
+   "meaning": "Whether the Ewald sum is performed with full 3D periodicity or with a 3DC correction that decouples periodic images along z for slab/interface systems.",
+   "mdp_key": "ewald-geometry",
+   "type": "choice",
+   "unit": "none",
+   "default": "3d",
+   "options": [
+    "3d",
+    "3dc"
+   ],
+   "range": "3d | 3dc",
+   "applies_to": [
+    "membrane",
+    "fluid",
+    "solvent"
+   ],
+   "depends_on": [
+    "coulombtype",
+    "pbc",
+    "system_geometry"
+   ],
+   "cost_impact": "3dc requires a vacuum slab (typically 3x the slab thickness in z), which inflates the box and therefore the PME grid; can be 1.5-3x more expensive.",
+   "agent_guidance": "Keep 3d for all normal bulk / fully-solvated systems, including standard bilayers (a periodic bilayer IS the intended physics). Use 3dc only for a genuine 2D system with a vacuum gap and a net dipole across z \u2014 e.g. a supported monolayer, a charged surface, an air/water interface with an asymmetric charge distribution. If you set 3dc you must also leave enough vacuum, or the correction is wrong.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "pbc",
+   "area": "electrostatics_and_cutoffs",
+   "label": "Periodic boundary conditions",
+   "meaning": "Whether the system is replicated periodically in 3D, in 2D (xy only), or is a non-periodic cluster in vacuum.",
+   "mdp_key": "pbc",
+   "type": "choice",
+   "unit": "none",
+   "default": "xyz",
+   "options": [
+    "xyz",
+    "no",
+    "xy"
+   ],
+   "range": "xyz | no | xy",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein",
+    "qm"
+   ],
+   "depends_on": [
+    "coulombtype",
+    "box",
+    "implicit_solvent"
+   ],
+   "cost_impact": "pbc=no with no cut-off is O(N^2) and only viable for small clusters/implicit solvent.",
+   "agent_guidance": "Always xyz for any condensed-phase box. Use pbc=no ONLY for vacuum/implicit-solvent runs (the OpenMM implicit track, small QM clusters), and then coulombtype MUST NOT be PME \u2014 use Cut-off with a large or infinite cut-off. pbc=xy requires walls and is expert-only. Setting pbc=no with PME is a hard grompp error.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "box_min_dim",
+   "area": "electrostatics_and_cutoffs",
+   "label": "Minimum box dimension (minimum-image constraint)",
+   "meaning": "The shortest box vector must be more than twice the largest cut-off, because under the minimum-image convention an atom must never see two periodic copies of the same partner; GROMACS enforces max(rlist, rcoulomb, rvdw) <= 0.5 * min box vector (for a triclinic/rhombic-dodecahedral cell it is half the smallest perpendicular width, not the vector length).",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "nm",
+   "default": "derived: >= 2 * max(rlist, rcoulomb, rvdw)",
+   "options": [],
+   "range": "> 2 * max(rlist, rcoulomb, rvdw); with NPT allow ~5-10% headroom for box contraction",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "rcoulomb",
+    "rvdw",
+    "rlist",
+    "verlet-buffer-tolerance",
+    "box_type",
+    "pcoupl"
+   ],
+   "cost_impact": "Atom count scales as box volume \u2014 this constraint is the main reason cut-offs cost money. A cubic box that satisfies it for a globular protein holds ~29% more solvent than the equivalent rhombic dodecahedron.",
+   "agent_guidance": "This is a HARD validity gate: before submitting any plan, check 2 * max(rcoulomb, rvdw, rlist_estimate) < min_box_vector, using rlist_estimate = max(rcoulomb,rvdw) + 0.1 nm to leave room for the auto buffer, and add a further 5% margin if pcoupl != no (an NPT box can shrink mid-run and mdrun will then ABORT with 'box too small for cut-off'). If the check fails, ENLARGE THE BOX \u2014 never shrink the force-field cut-off. When mdrun dies with that error mid-run, the correct self-correction is to rebuild with a larger box or reduce the pressure-coupling aggressiveness, not to lower rcoulomb. Note the existing recipes' rc = min(1.0, 0.49*box) idiom is a crude version of exactly this constraint.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "solute_box_distance",
+   "area": "electrostatics_and_cutoffs",
+   "label": "Solute-to-box-edge distance",
+   "meaning": "The minimum distance between the solute and the box wall; it must be at least the cut-off so that a protein never interacts with its own periodic image, and larger still if the solute can rotate or unfold.",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "nm",
+   "default": "1.0",
+   "options": [],
+   "range": "0.8 - 2.0 (>= rcoulomb; 1.0 typical for a folded globular protein, 1.2-1.5 for a flexible or unfolding one)",
+   "applies_to": [
+    "protein",
+    "membrane"
+   ],
+   "depends_on": [
+    "rcoulomb",
+    "rvdw",
+    "box_type",
+    "solute_max_dimension"
+   ],
+   "cost_impact": "Dominant cost driver for solvated proteins. Box volume ~ (L_solute + 2d)^3, so d=1.5 vs d=1.0 nm on a 4 nm protein is ~1.5x the atoms and hence ~1.5x the GPU time. Switching -bt from cubic to dodecahedron at the same d cuts volume (and cost) by ~29%.",
+   "agent_guidance": "Set d >= rcoulomb, always. Use d = 1.0 nm with -bt dodecahedron for a folded globular protein (this is the standard, cheapest correct choice and should be the default for the lysozyme-class goals). Raise to 1.2-1.5 nm if the protein is elongated, if the study is about unfolding/large conformational change (the protein must not grow into its image), or if the user asks for high rigour. Under the GPU-budget objective, switching cubic -> dodecahedron is the single largest free win available and should be the agent's first cost-reduction move, ahead of touching any cut-off.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "pme_offload",
+   "area": "electrostatics_and_cutoffs",
+   "label": "PME GPU offload",
+   "meaning": "Whether the reciprocal-space (FFT) part of PME is computed on the GPU alongside the short-range nonbonded kernel, rather than left on the CPU.",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "none",
+   "default": "auto",
+   "options": [
+    "auto",
+    "gpu",
+    "cpu"
+   ],
+   "range": "auto | gpu | cpu",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "coulombtype",
+    "pme-order",
+    "n_ranks",
+    "gpu_available"
+   ],
+   "cost_impact": "On a single strong GPU (GB10) with a weak CPU, moving PME to the GPU is commonly a 1.5-2.5x end-to-end speedup; conversely, PME stranded on the CPU is the usual reason a GPU run is 'inexplicably' slow. Requires -ntmpi 1 (single PME rank) and pme-order=4.",
+   "agent_guidance": "For any PME run on this single-GPU node, emit -nb gpu -pme gpu -bonded gpu -update gpu with -ntmpi 1. If the user reports poor GPU utilisation on a PME system, check this FIRST \u2014 before touching rcoulomb or fourierspacing. Fall back to -pme cpu only if mdrun rejects the combination (e.g. pme-order > 4, free-energy perturbation on electrostatics, or multiple PME ranks). This is the cheapest way to 'stay under the GPU budget' without changing any physics.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "electrostatics_preset",
+   "area": "electrostatics_and_cutoffs",
+   "label": "Force-field-consistent cutoff preset",
+   "meaning": "A named bundle that sets the entire electrostatics-and-cutoff block to the values the chosen force field was actually parameterised with, because these keys are not independently tunable.",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "none",
+   "default": "amber",
+   "options": [
+    "amber",
+    "charmm36",
+    "opls",
+    "gromos",
+    "martini3",
+    "lj_cutoff",
+    "vacuum"
+   ],
+   "range": "one of the listed presets",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "force_field",
+    "system_class"
+   ],
+   "cost_impact": "charmm36 (rvdw=rcoulomb=1.2) is roughly 1.3-1.5x more expensive per step than amber (1.0). martini3 is orders of magnitude cheaper per unit of simulated time (4-10 beads/molecule, dt=20 fs, no PME).",
+   "agent_guidance": "ALWAYS pick a preset first and only then override individual keys, and refuse to mix. The bundles are: amber = {PME, rcoulomb 1.0, rvdw 1.0, vdwtype Cut-off, vdw-modifier Potential-shift-Verlet, DispCorr EnerPres, epsilon_r 1, fourierspacing 0.12}; charmm36 = {PME, rcoulomb 1.2, rvdw 1.2, vdwtype Cut-off, vdw-modifier Force-switch, rvdw-switch 1.0, DispCorr no, epsilon_r 1, fourierspacing 0.12}; opls = amber but rcoulomb=rvdw=1.0-1.2 with geometric combination rules; gromos = {PME/RF, rcoulomb 1.4, rvdw 1.4, DispCorr EnerPres}; martini3 = {Reaction-Field, rcoulomb 1.1, rvdw 1.1, vdw-modifier Potential-shift-Verlet, epsilon_r 15, epsilon_rf 0, DispCorr no, verlet-buffer-tolerance 0.005}; lj_cutoff = {Cut-off, rcoulomb=rvdw=min(1.0, 0.49*box), DispCorr Ener/EnerPres, epsilon_r 1} for neutral LJ fluids; vacuum = {pbc no, Cut-off with 0 (infinite) cut-offs, no PME}. If a user names a force field, the preset is DETERMINED \u2014 do not ask them for cutoffs. If a user asks for a cutoff that contradicts their force field, say so and explain the consequence (wrong density / wrong area-per-lipid) rather than silently complying.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "ensemble",
+   "area": "thermostat_and_barostat",
+   "label": "Thermodynamic ensemble",
+   "meaning": "Which macroscopic variables are held fixed during this stage: NVE = no thermostat/barostat, NVT = thermostat only (fixed box), NPT = thermostat + barostat (box volume fluctuates to hold pressure), NPgammaT = thermostat + barostat with imposed surface tension for membranes.",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "dimensionless",
+   "default": "NPT",
+   "options": [
+    "NVE",
+    "NVT",
+    "NPT",
+    "NPgammaT"
+   ],
+   "range": "n/a",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "stage (em/nvt/npt/production)",
+    "integrator (sd already thermostats; NVE impossible with sd)"
+   ],
+   "cost_impact": "negligible (<1% \u2014 coupling is applied every nsttcouple/nstpcouple steps); NPT adds a virial/box rescale but no meaningful GPU cost.",
+   "agent_guidance": "Use NVT for the first equilibration stage (heat the system at fixed box with position restraints on solute), NPT for the second equilibration stage (relax density/box) and for production of any condensed-phase system. Use NPT for essentially all protein/solvent/membrane production runs \u2014 reported densities and volumes are only meaningful in NPT. Use NVE only for energy-conservation validation or LJ-argon microcanonical demos. Use NPgammaT only when the user explicitly wants a fixed nonzero surface tension on a bilayer; otherwise membranes run semiisotropic NPT at ref-p = 1 1 bar (which is zero tension).",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "tcoupl",
+   "area": "thermostat_and_barostat",
+   "label": "Thermostat algorithm",
+   "meaning": "The algorithm that exchanges energy with a heat bath to hold the system at ref-t; different algorithms differ in whether they generate a correct canonical ensemble and in how strongly they perturb the dynamics.",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "dimensionless",
+   "default": "v-rescale",
+   "options": [
+    "no",
+    "berendsen",
+    "v-rescale",
+    "nose-hoover",
+    "andersen",
+    "andersen-massive"
+   ],
+   "range": "n/a",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "ensemble (must be 'no' for NVE)",
+    "integrator ('sd' has a built-in Langevin thermostat; set tcoupl=no with sd)",
+    "gen-vel / continuation",
+    "pcoupl (nose-hoover should be paired with parrinello-rahman, not with berendsen/c-rescale)"
+   ],
+   "cost_impact": "None measurable. All thermostats are O(N) velocity rescalings applied every nsttcouple steps.",
+   "agent_guidance": "Default to v-rescale (stochastic velocity rescaling, Bussi 2007) for BOTH equilibration and production \u2014 it is the only thermostat that is simultaneously robust from a cold/strained start AND gives a rigorously correct canonical ensemble, so it is the safe universal choice. Use berendsen ONLY as a first-pass heating thermostat if the system is badly clashing, and NEVER for production: it does not sample the canonical ensemble and causes the 'flying ice cube' equipartition artefact (GROMACS emits a grompp note about this). Use nose-hoover for production when the user needs rigorously correct canonical dynamics/kinetics (e.g. computing time-correlation functions, spectral densities, or when pairing with Parrinello-Rahman for a formally correct NPT); do NOT use nose-hoover to start from a non-equilibrated state \u2014 it is deterministic, oscillatory, and can ring for tens of ps or blow up. Rule: equilibration = v-rescale (or berendsen if desperate); production = v-rescale (default) or nose-hoover (rigorous). Set tcoupl=no if and only if integrator=sd (Langevin already thermostats) or ensemble=NVE.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "tc-grps",
+   "area": "thermostat_and_barostat",
+   "label": "Temperature coupling groups",
+   "meaning": "The (space-separated) index groups that each get their own separate thermostat, so that a slow, cold solute cannot silently drain heat into a fast, hot solvent (the 'hot solvent / cold solute' artefact).",
+   "mdp_key": null,
+   "type": "string",
+   "unit": "index-group names (from default groups or an index.ndx)",
+   "default": "System",
+   "options": [
+    "System",
+    "Protein Non-Protein",
+    "Protein SOL_ION",
+    "Protein_LIG SOL_ION",
+    "POPC W_ION",
+    "Protein POPC W_ION",
+    "DPPC W",
+    "SOL"
+   ],
+   "range": "1-4 groups in practice; every atom must belong to exactly one listed group or grompp errors",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "tau-t and ref-t must have EXACTLY the same number of entries as tc-grps",
+    "requires an index.ndx (gmx make_ndx) for any group that is not a default group, e.g. merging SOL and ions into SOL_ION",
+    "system class"
+   ],
+   "cost_impact": "None.",
+   "agent_guidance": "Choose by system class. Pure homogeneous fluid or neat solvent (lj_argon, water_box): 'System' \u2014 one group is correct and adding more only adds noise. Solvated protein: 'Protein Non-Protein' (or better, 'Protein SOL_ION' with an index group merging water+ions) \u2014 two groups. Membrane (atomistic or Martini): at MINIMUM separate the lipids from the water, e.g. 'POPC W_ION' / 'DPPC SOL_ION'; for a membrane protein use three groups 'Protein POPC W_ION'. NEVER couple a bilayer as a single 'System' group \u2014 this is the current Martini bug (mdp.py:139) and is a known artefact source for lipid dynamics. IMPORTANT COUNTER-RULE: do not over-split. Groups with few degrees of freedom (a single ion group, a small ligand alone) have huge relative temperature fluctuations and get over-thermostatted \u2014 always merge ions into the solvent group rather than giving them their own thermostat, and merge a small ligand into the protein group. Two or three groups is right; five is a bug.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "tau-t",
+   "area": "thermostat_and_barostat",
+   "label": "Thermostat coupling time constant (per group)",
+   "meaning": "The characteristic time over which each coupling group's kinetic energy relaxes toward the bath temperature \u2014 small tau-t = tight, fast, heavily damped coupling; large tau-t = weak coupling that perturbs the dynamics less but equilibrates slowly.",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "ps (one value per tc-grps entry, space separated)",
+   "default": "0.1",
+   "options": [],
+   "range": "0.02 - 5.0 ps (typical 0.1-1.0; must be >= ~20*dt and > nsttcouple*dt)",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "tc-grps (needs the same number of values)",
+    "tcoupl (nose-hoover needs a LARGER tau-t than v-rescale \u2014 it is a period, not a relaxation time)",
+    "dt",
+    "nsttcouple"
+   ],
+   "cost_impact": "None directly, but a too-small tau-t suppresses real dynamics (artificially slows diffusion) and a too-large one wastes wall-clock in equilibration.",
+   "agent_guidance": "Atomistic default: 0.1 ps per group with v-rescale (the CHARMM/Amber community standard). Martini/coarse-grained: 1.0 ps (the Martini 3 recommendation) \u2014 CG beads have far fewer DOF and 0.1 over-damps them. If tcoupl=nose-hoover, MULTIPLY by ~5-10 (use 0.5-2.0 ps): for Nose-Hoover tau-t is an oscillation period, and a small value causes violent temperature ringing. Give every group the SAME tau-t unless you have a specific reason \u2014 differing tau-t across groups sets up a systematic heat flux. Only lower tau-t (to ~0.05 ps) transiently during the first heating stage of a strained system; raise it back for production. Never set tau-t below ~20*dt.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "ref-t",
+   "area": "thermostat_and_barostat",
+   "label": "Reference (target) temperature (per group)",
+   "meaning": "The thermostat set-point temperature for each coupling group \u2014 the temperature the simulation is held at.",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "K (one value per tc-grps entry, space separated)",
+   "default": "310",
+   "options": [],
+   "range": "1 - 1000 K (physically meaningful for biomolecules: 250-400 K; LJ argon: 80-120 K)",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "tc-grps (same number of values)",
+    "gen-temp (should match on the first velocity-generating stage)",
+    "lipid type for membranes: MUST be above the gel/fluid transition temperature Tm"
+   ],
+   "cost_impact": "None. (Indirectly: higher T = faster dynamics = fewer ns needed to observe an event, but also faster unfolding.)",
+   "agent_guidance": "ALL groups get the SAME value \u2014 different ref-t per group means you are deliberately driving a heat flux, which is almost never intended and is a classic error. Physiological/biomolecular default 310 K; use 300 K to compare with the bulk of the published literature; 298 K for room-temperature experimental comparison. LJ argon: 94-120 K (liquid). Membranes: ref-t MUST exceed the lipid melting temperature or the bilayer freezes into a gel and everything you measure is wrong \u2014 POPC Tm = 271 K (use 303-310 K), DPPC Tm = 314 K (use 323 K), DOPC Tm = 253 K. If the agent's goal says 'physiological', use 310. If a run is intended to test thermal stability/unfolding, raise ref-t (e.g. 400-500 K) explicitly and say so.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "nsttcouple",
+   "area": "thermostat_and_barostat",
+   "label": "Thermostat application interval",
+   "meaning": "How often (in steps) the temperature coupling is applied; GROMACS defaults to -1 which resolves to nstlist (typically 10-20), applying the thermostat in a leapfrog-compatible batched way.",
+   "mdp_key": null,
+   "type": "int",
+   "unit": "steps",
+   "default": "-1",
+   "options": [],
+   "range": "-1 (auto) or 1 - 100; must satisfy nsttcouple*dt << tau-t",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "nstlist",
+    "tau-t",
+    "dt"
+   ],
+   "cost_impact": "Negligible; setting it to 1 costs at most ~1% and removes a small amount of GPU-friendly batching.",
+   "agent_guidance": "Leave at -1 (auto) in essentially all cases. Only set it to 1 if you are debugging temperature control or need step-resolved kinetic energy. Never set it so large that nsttcouple*dt approaches tau-t.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "nh-chain-length",
+   "area": "thermostat_and_barostat",
+   "label": "Nose-Hoover chain length",
+   "meaning": "Number of chained Nose-Hoover thermostat variables; chains >1 fix the known ergodicity failure of a single Nose-Hoover variable (notably for stiff/harmonic systems).",
+   "mdp_key": null,
+   "type": "int",
+   "unit": "count",
+   "default": "10",
+   "options": [],
+   "range": "1 - 10",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "protein",
+    "membrane"
+   ],
+   "depends_on": [
+    "tcoupl=nose-hoover (ignored otherwise)",
+    "integrator: GROMACS FORCES this to 1 with the leap-frog integrator (md); chains >1 require md-vv"
+   ],
+   "cost_impact": "None.",
+   "agent_guidance": "Only relevant when tcoupl=nose-hoover. With integrator=md (leap-frog, the default) GROMACS silently reduces it to 1 \u2014 accept that. If the user needs a proper NH chain, you must also switch integrator to md-vv, which loses some GPU-offload paths; only do this on explicit request.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "pcoupl",
+   "area": "thermostat_and_barostat",
+   "label": "Barostat algorithm",
+   "meaning": "The algorithm that rescales the box and coordinates to hold the system at ref-p; algorithms differ in whether they generate a correct NPT ensemble and in how stable they are far from equilibrium.",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "dimensionless",
+   "default": "c-rescale",
+   "options": [
+    "no",
+    "berendsen",
+    "c-rescale",
+    "parrinello-rahman",
+    "mttk"
+   ],
+   "range": "n/a",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "ensemble (must be 'no' for NVE/NVT)",
+    "tcoupl (a barostat REQUIRES an active thermostat; pcoupl with tcoupl=no is invalid)",
+    "integrator (mttk requires md-vv and is incompatible with constraints)",
+    "pcoupltype",
+    "refcoord-scaling when position restraints are on"
+   ],
+   "cost_impact": "<1%. Barostats do not change force-evaluation cost. (Domain-decomposition rescaling is trivial.)",
+   "agent_guidance": "Default to c-rescale for BOTH equilibration and production \u2014 it is GROMACS' stochastic cell rescaling (Bernetti & Bussi 2020), the modern replacement for Berendsen: it is as robust as Berendsen from a bad start AND it samples the correct NPT ensemble, so unlike the thermostat case there is no longer a reason to switch algorithms between stages. Use berendsen ONLY on legacy/reproduction work and NEVER for production (wrong volume fluctuations; deprecated in GROMACS 2021+). Use parrinello-rahman for production ONLY (it is a second-order oscillatory equation of motion and WILL blow up or ring badly if started from a non-equilibrated box/pressure) and only after a c-rescale NPT equilibration has settled the density; pair it with tcoupl=nose-hoover for a formally correct NPT ensemble. Set pcoupl=no for: energy minimisation, the NVT equilibration stage, gas-phase/vacuum/implicit-solvent runs, and any non-periodic system. HARD RULE: never enable pressure coupling in the very first MD stage after minimisation \u2014 a cavity or clash makes the instantaneous virial enormous and the box collapses or explodes.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "pcoupltype",
+   "area": "thermostat_and_barostat",
+   "label": "Box scaling geometry",
+   "meaning": "Whether the box is rescaled by one common factor in all three directions (isotropic), independently in the xy-plane vs the z-axis (semiisotropic), independently along each axis (anisotropic), or at a fixed imposed surface tension (surface-tension).",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "dimensionless",
+   "default": "isotropic",
+   "options": [
+    "isotropic",
+    "semiisotropic",
+    "anisotropic",
+    "surface-tension"
+   ],
+   "range": "n/a",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "pcoupl != no",
+    "SYSTEM CLASS \u2014 this is the single most system-dependent parameter in this area",
+    "ref-p and compressibility must supply the matching number of values",
+    "box shape (anisotropic/semiisotropic require a rectangular box; a rhombic-dodecahedron/triclinic box must use isotropic)"
+   ],
+   "cost_impact": "None.",
+   "agent_guidance": "THIS IS THE MEMBRANE RULE. Any system containing a lipid bilayer \u2014 atomistic OR Martini, pure lipid OR membrane protein \u2014 MUST use pcoupltype = semiisotropic, with the bilayer normal along z. Reason: a bilayer is a 2D fluid; its in-plane (xy) compressibility and its normal (z) compressibility are physically different, and isotropic coupling forcibly ties them together, which pins the area-per-lipid to whatever it started at and destroys the very observable (APL, bilayer thickness, area compressibility) the simulation exists to measure. With semiisotropic, ref-p and compressibility each take TWO values: '<xy> <z>'. Use isotropic for every homogeneous or globular system: neat fluids (LJ argon), water boxes, ions in water, and solvated globular proteins \u2014 an isotropic box is correct there and is the only option compatible with a rhombic-dodecahedron box. Use anisotropic ONLY for crystals/solids where all three axes and the off-diagonal box angles must relax independently; it is unstable for liquids (the box shears) \u2014 never use it for a solvated biomolecule. Use surface-tension only for a deliberate NPgammaT membrane run at nonzero tension. NOTE the current bug: mdp.py:76 hardcodes isotropic, so an ATOMISTIC POPC bilayer is currently physically wrong; only the Martini path gets semiisotropic.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "tau-p",
+   "area": "thermostat_and_barostat",
+   "label": "Barostat coupling time constant",
+   "meaning": "The characteristic time over which the box volume relaxes toward the target pressure \u2014 small tau-p = fast, aggressive box rescaling (risk of oscillation/collapse); large tau-p = gentle coupling that perturbs the dynamics less but takes longer to reach the right density.",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "ps (a single scalar even for semiisotropic \u2014 GROMACS takes one tau-p for all dimensions)",
+   "default": "2.0",
+   "options": [],
+   "range": "0.5 - 20.0 ps (must satisfy tau-p >> nstpcouple*dt; must be >= tau-t so the barostat is slower than the thermostat)",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "pcoupl (parrinello-rahman needs a LARGER tau-p than c-rescale \u2014 it is an oscillation period)",
+    "tau-t (keep tau-p >= tau-t; a barostat faster than the thermostat is unstable)",
+    "nstpcouple",
+    "system size (bigger boxes have smaller relative volume fluctuations and tolerate/need larger tau-p)"
+   ],
+   "cost_impact": "None directly. A too-small tau-p causes box oscillations that can crash the run and waste the entire GPU allocation; a too-large tau-p means the density has not converged when production starts, invalidating the run.",
+   "agent_guidance": "Atomistic c-rescale: 2.0 ps (safe, standard; 1.0-5.0 all fine). Atomistic parrinello-rahman: use 2.0-5.0 ps and NEVER below ~1.0 ps \u2014 PR is a second-order oscillator and a short tau-p makes the box ring or explode. Martini/coarse-grained: 12.0 ps (Martini 3 recommendation) \u2014 CG systems are softer and much more prone to barostat oscillation. Membranes generally want a longer tau-p (5-12 ps) than globular proteins because the area-per-lipid relaxes slowly. If a run crashes with 'box is too small' / LINCS warnings / 'pressure scaling more than 1%', the FIRST fix is to increase tau-p (and/or switch pcoupl from parrinello-rahman to c-rescale), not to shrink dt.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "ref-p",
+   "area": "thermostat_and_barostat",
+   "label": "Reference (target) pressure",
+   "meaning": "The barostat set-point pressure; with semiisotropic coupling it is TWO numbers, the lateral (xy, in-plane) pressure and the normal (z) pressure, whose difference times the box height defines the surface tension.",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "bar (1 value for isotropic; 2 values '<xy> <z>' for semiisotropic; 3+ for anisotropic)",
+   "default": "1.0",
+   "options": [],
+   "range": "-500 to 10000 bar (physical default 1.0; high-pressure biophysics up to ~5000 bar)",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "pcoupltype \u2014 the NUMBER OF VALUES must match (1 / 2 / 6); a mismatch is a grompp error",
+    "pcoupl != no"
+   ],
+   "cost_impact": "None.",
+   "agent_guidance": "Use 1.0 bar for essentially everything \u2014 ambient conditions. For a semiisotropic membrane, write '1.0 1.0' (equal lateral and normal pressure), which corresponds to ZERO surface tension: this is the correct, standard choice for a tensionless bilayer, and is what you want unless the user explicitly asks for a tensioned membrane. Setting ref-p to unequal values (e.g. '0.0 1.0') imposes a nonzero surface tension \u2014 do this only on explicit request, and prefer pcoupltype=surface-tension with an explicit gamma instead, which is less error-prone. Raise ref-p only for a deliberate high-pressure study (protein pressure denaturation, deep-sea/piezophile work). Do NOT confuse the instantaneous pressure (which fluctuates by hundreds of bar in a small box \u2014 that is normal and physical, not an error) with ref-p.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "compressibility",
+   "area": "thermostat_and_barostat",
+   "label": "Isothermal compressibility",
+   "meaning": "The assumed isothermal compressibility of the system, used ONLY to set the barostat's box-rescaling step size (it does not change the physics of the sampled ensemble, only how fast/aggressively the box responds).",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "bar^-1 (1 value for isotropic; 2 values '<xy> <z>' for semiisotropic)",
+   "default": "4.5e-5",
+   "options": [],
+   "range": "1e-6 to 1e-3 bar^-1",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "pcoupltype \u2014 number of values must match",
+    "solvent identity (this is essentially the compressibility of the majority phase)",
+    "force field resolution (coarse-grained systems are softer)"
+   ],
+   "cost_impact": "None directly, but a value that is far too large makes the box rescale violently and can crash the run; far too small makes the density converge very slowly, wasting GPU time in equilibration.",
+   "agent_guidance": "Atomistic water-solvated systems (water box, ions, solvated protein, atomistic membrane): 4.5e-5 bar^-1 \u2014 the compressibility of liquid water, and the right value for anything that is mostly water. For an ATOMISTIC semiisotropic membrane write '4.5e-5 4.5e-5' (the same value twice \u2014 the common practice; do NOT try to plug in a real lipid area-compressibility here, this parameter is a barostat step size, not a measured observable). Martini/coarse-grained: 3e-4 bar^-1 (CG water is ~7x softer than atomistic water) \u2014 using 4.5e-5 with Martini makes the box converge painfully slowly. Set the xy entry to 0 to FREEZE the lateral box dimension (constant-area NPAT ensemble) \u2014 occasionally used for membranes, only on explicit request. Being off by 2-3x is harmless; being off by 10x+ risks instability or non-convergence.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "nstpcouple",
+   "area": "thermostat_and_barostat",
+   "label": "Barostat application interval",
+   "meaning": "How often (in steps) the pressure coupling is applied; -1 resolves to nstlist.",
+   "mdp_key": null,
+   "type": "int",
+   "unit": "steps",
+   "default": "-1",
+   "options": [],
+   "range": "-1 (auto) or 1 - 100; must satisfy nstpcouple*dt << tau-p",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "nstlist",
+    "tau-p",
+    "dt",
+    "pcoupl != no"
+   ],
+   "cost_impact": "Negligible.",
+   "agent_guidance": "Leave at -1 (auto). Only reduce it if the barostat is unstable and increasing tau-p has not helped.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "refcoord-scaling",
+   "area": "thermostat_and_barostat",
+   "label": "Position-restraint reference coordinate scaling",
+   "meaning": "How the reference coordinates of position restraints are treated when the barostat rescales the box: 'no' leaves them fixed (so restrained atoms drift relative to the shrinking/growing box), 'all' scales them with the box, 'com' scales only the center of mass of the reference coordinates.",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "dimensionless",
+   "default": "com",
+   "options": [
+    "no",
+    "all",
+    "com"
+   ],
+   "range": "n/a",
+   "applies_to": [
+    "protein",
+    "membrane"
+   ],
+   "depends_on": [
+    "define = -DPOSRES (only meaningful when position restraints are active)",
+    "pcoupl != no"
+   ],
+   "cost_impact": "None.",
+   "agent_guidance": "MANDATORY whenever you combine position restraints (-DPOSRES) with pressure coupling \u2014 i.e. in the standard restrained-NPT equilibration stage. If you omit it, grompp emits a warning and the restrained solute is pulled apart as the box rescales. Use 'com' for a solvated protein (the standard choice: the restraint reference moves with the box center of mass but the internal geometry is preserved). Use 'all' when the restrained entity spans the box (e.g. restraining lipid phosphates across a bilayer). Never set 'no' with a barostat on.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "gen-vel",
+   "area": "thermostat_and_barostat",
+   "label": "Generate initial velocities",
+   "meaning": "Whether to draw fresh random velocities from a Maxwell-Boltzmann distribution at gen-temp at the start of this stage, discarding any velocities carried in from the previous stage.",
+   "mdp_key": null,
+   "type": "bool",
+   "unit": "dimensionless",
+   "default": "yes",
+   "options": [
+    "yes",
+    "no"
+   ],
+   "range": "n/a",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "stage \u2014 must be 'yes' on the FIRST MD stage after minimisation and 'no' on every subsequent stage",
+    "continuation (gen-vel=yes pairs with continuation=no; gen-vel=no pairs with continuation=yes)",
+    "gen-temp",
+    "gen-seed"
+   ],
+   "cost_impact": "None.",
+   "agent_guidance": "gen-vel = yes ONLY on the first MD stage (the NVT heating stage), because after energy minimisation the system has zero velocities. On the NPT equilibration stage and the production stage set gen-vel = no and continuation = yes, so the run continues the existing trajectory from the checkpoint/velocities instead of throwing away the equilibration you just paid for. THIS IS THE CURRENT BUG: mdp.py:84 always regenerates velocities, so every production run starts from a fresh random kick and re-equilibrates from scratch. Setting gen-vel=yes at the start of production also silently destroys any pressure/density equilibration.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "gen-temp",
+   "area": "thermostat_and_barostat",
+   "label": "Velocity generation temperature",
+   "meaning": "The temperature of the Maxwell-Boltzmann distribution used to draw initial velocities when gen-vel = yes.",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "K",
+   "default": "310",
+   "options": [],
+   "range": "1 - 1000 K",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "gen-vel = yes (ignored otherwise)",
+    "ref-t"
+   ],
+   "cost_impact": "None.",
+   "agent_guidance": "Always set equal to ref-t. The only reason to differ is a deliberate slow-heating/annealing protocol (start at 50 K and ramp), which should be done with the annealing keys rather than by mismatching gen-temp.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "gen-seed",
+   "area": "thermostat_and_barostat",
+   "label": "Velocity generation random seed",
+   "meaning": "The pseudo-random seed used to draw initial velocities; -1 means 'pick a fresh random seed', which makes every run irreproducible.",
+   "mdp_key": null,
+   "type": "int",
+   "unit": "dimensionless (integer seed)",
+   "default": "-1",
+   "options": [],
+   "range": "-1 or any positive 32-bit integer",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "gen-vel = yes (ignored otherwise)",
+    "ld-seed (the separate seed for the sd integrator / v-rescale stochastic term)"
+   ],
+   "cost_impact": "None.",
+   "agent_guidance": "ALWAYS set an explicit positive integer and record it in the run manifest \u2014 otherwise the same submitted parameters give a different trajectory every time and neither reproduction nor agent self-correction is possible (this is the current behaviour, gen-seed = -1). To build a REPLICATE ensemble (the correct way to get error bars on any MD observable), submit N identical jobs differing ONLY in gen-seed (e.g. 3-5 replicates with seeds 1..5) \u2014 this is the single most valuable knob for statistical validity and an agent should reach for it whenever it is asked 'is this result significant?'. Note that with tcoupl=v-rescale the thermostat is itself stochastic, so ld-seed must ALSO be fixed for bit-wise reproducibility.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "continuation",
+   "area": "thermostat_and_barostat",
+   "label": "Continue from a previous stage",
+   "meaning": "Tells GROMACS whether the incoming coordinates already satisfy the constraints (and whether to skip the initial constraint/velocity-correction step), i.e. whether this stage is a continuation of a previous run rather than a fresh start.",
+   "mdp_key": null,
+   "type": "bool",
+   "unit": "dimensionless",
+   "default": "no",
+   "options": [
+    "yes",
+    "no"
+   ],
+   "range": "n/a",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "gen-vel (must be the logical inverse: gen-vel=yes -> continuation=no; gen-vel=no -> continuation=yes)",
+    "constraints != none",
+    "stage"
+   ],
+   "cost_impact": "None.",
+   "agent_guidance": "continuation = no on the first MD stage after energy minimisation (paired with gen-vel = yes). continuation = yes on the NPT equilibration stage and on production (paired with gen-vel = no), and whenever extending/restarting a run from a checkpoint. Getting this wrong is silent: an unnecessary initial constraint step slightly perturbs the trajectory but does not error.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "thermostat_friction",
+   "area": "thermostat_and_barostat",
+   "label": "Langevin friction coefficient (OpenMM)",
+   "meaning": "The OpenMM/implicit-solvent analogue of a thermostat: the Langevin collision frequency that couples each particle to the heat bath; it is the reciprocal of a coupling time (friction = 1/tau).",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "ps^-1",
+   "default": "1.0",
+   "options": [],
+   "range": "0.1 - 10.0 ps^-1",
+   "applies_to": [
+    "protein",
+    "solvent",
+    "qm"
+   ],
+   "depends_on": [
+    "OpenMM track only (no GROMACS tcoupl in this path)",
+    "implicit solvent (higher friction crudely mimics missing solvent viscosity)"
+   ],
+   "cost_impact": "None.",
+   "agent_guidance": "Use 1.0 ps^-1 for explicit-solvent Langevin dynamics (weak coupling, dynamics barely perturbed). For IMPLICIT solvent, where there is no water to provide viscosity, use a higher friction (5-91 ps^-1; 5.0 is a common compromise, 91 ps^-1 mimics real water viscosity but slows conformational sampling badly). Do NOT go below ~0.1 ps^-1 \u2014 the system then barely thermostats and drifts. Note that with a Langevin integrator you must NOT additionally attach a thermostat (double-thermostatting); the GROMACS equivalent is integrator=sd with tcoupl=no.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "barostat_frequency",
+   "area": "thermostat_and_barostat",
+   "label": "Monte-Carlo barostat attempt frequency (OpenMM)",
+   "meaning": "The OpenMM analogue of tau-p/nstpcouple: how many MD steps elapse between Monte-Carlo volume-move attempts; OpenMM's barostat is a rigorous MC scheme rather than an equation-of-motion barostat, so it has no time constant.",
+   "mdp_key": null,
+   "type": "int",
+   "unit": "steps",
+   "default": "25",
+   "options": [],
+   "range": "10 - 100",
+   "applies_to": [
+    "solvent",
+    "protein",
+    "membrane"
+   ],
+   "depends_on": [
+    "OpenMM track only",
+    "an OpenMM thermostat/Langevin integrator must be active (the MC acceptance criterion needs T)"
+   ],
+   "cost_impact": "Each attempt re-evaluates the total potential energy \u2014 at frequency 25 this is a few percent overhead; at frequency 1 it would roughly double the cost.",
+   "agent_guidance": "Leave at 25 (the OpenMM default) \u2014 it is a good trade between volume equilibration speed and the energy-reevaluation overhead. For a membrane in OpenMM use MonteCarloMembraneBarostat (the semiisotropic analogue), NOT the plain MonteCarloBarostat: the same bilayer rule applies \u2014 the xy plane and the z normal must be scaled independently, with surface tension set to 0 for a tensionless bilayer.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "protocol.stages",
+   "area": "output_analysis_and_protocol",
+   "label": "Protocol stages",
+   "meaning": "Ordered list of simulation stages the run executes (each stage is a data object with its own mdp overrides, and each stage inherits the previous stage's coordinates/velocities/checkpoint), replacing the hardcoded EM->production step list.",
+   "mdp_key": null,
+   "type": "string",
+   "unit": "list[stage]",
+   "default": "[minimize, nvt, npt, production]",
+   "options": [
+    "minimize",
+    "nvt",
+    "npt",
+    "production",
+    "anneal",
+    "extend",
+    "free_energy_lambda"
+   ],
+   "range": "1-8 stages; a stage key may repeat (e.g. two npt stages with decreasing restraints)",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "system_class",
+    "force_field"
+   ],
+   "cost_impact": "Total wall time = sum of stage durations; equilibration stages are typically 1-5% of production.",
+   "agent_guidance": "Protein/membrane/solvated systems: always use [minimize, nvt, npt, production]. Pure LJ fluid or a simple water box for a structural property: [minimize, npt] or [minimize, nvt, production] is enough. Never run a biomolecular production stage directly after EM with gen-vel=yes \u2014 it is the single biggest correctness defect in the current lab.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "stage.name",
+   "area": "output_analysis_and_protocol",
+   "label": "Stage id",
+   "meaning": "Unique label for a stage, used for its subdirectory, .mdp filename, and manifest step entry.",
+   "mdp_key": null,
+   "type": "string",
+   "unit": "none",
+   "default": "derived from stage type",
+   "options": null,
+   "range": "",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [],
+   "cost_impact": "none",
+   "agent_guidance": "Use stable names (em, nvt, npt1, npt2, prod) so a follow-up job can reference a prior stage's checkpoint for restart/extension.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "stage.type",
+   "area": "output_analysis_and_protocol",
+   "label": "Stage type",
+   "meaning": "Which physics template the stage instantiates: energy minimization, constant-volume equilibration, constant-pressure equilibration, or free production.",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "none",
+   "default": "production",
+   "options": [
+    "minimize",
+    "nvt",
+    "npt",
+    "production",
+    "anneal",
+    "free_energy_lambda"
+   ],
+   "range": "",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [],
+   "cost_impact": "minimize is cheap (seconds-minutes); nvt/npt are short; production dominates.",
+   "agent_guidance": "Pick the type first, then only override what the goal requires. Do not hand-assemble a stage from raw mdp keys unless the goal is unusual (e.g. pulling, annealing).",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "stage.duration_ps",
+   "area": "output_analysis_and_protocol",
+   "label": "Stage duration",
+   "meaning": "Physical simulated time for the stage; the canonical time-domain input from which nsteps = round(duration_ps/dt) is derived, so an agent can express '10 ns' directly instead of guessing a step count.",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "ps",
+   "default": "100 (nvt), 100-1000 (npt), 10000 (production)",
+   "options": null,
+   "range": "1 - 1e6 ps",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "dt",
+    "stage.type"
+   ],
+   "cost_impact": "Linear in wall time. Wall time \u2248 duration_ns / (ns/day achieved).",
+   "agent_guidance": "ALWAYS set time, never nsteps. Protein folding-stability check: 10-100 ns. Membrane equilibration: >=100 ns before measuring APL. Solvent structure (RDF/density): 1-5 ns. Diffusion coefficient: >=5-10 ns so the MSD fit window is >=1 ns. If the GPU budget is exceeded, shorten production or chunk with stage.type=extend rather than silently truncating.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "stage.duration_ns",
+   "area": "output_analysis_and_protocol",
+   "label": "Stage duration (ns)",
+   "meaning": "Convenience alias for stage.duration_ps in nanoseconds; exactly one of the two may be set.",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "ns",
+   "default": "unset",
+   "options": null,
+   "range": "0.001 - 1000 ns",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "stage.duration_ps"
+   ],
+   "cost_impact": "same as duration_ps",
+   "agent_guidance": "Use this when the user speaks in ns ('run for 10 ns'). Reject/flag any plan where production < 1 ns for a protein stability question \u2014 the answer would be meaningless.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "stage.continuation",
+   "area": "output_analysis_and_protocol",
+   "label": "Continue from previous stage",
+   "meaning": "Tells GROMACS not to re-apply constraints and not to re-generate velocities because the incoming coordinates/velocities already satisfy the constraints (i.e. this stage continues a previous one).",
+   "mdp_key": null,
+   "type": "bool",
+   "unit": "none",
+   "default": "no for the first dynamics stage after EM; yes for every stage after that",
+   "options": [
+    "yes",
+    "no"
+   ],
+   "range": "",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "stage.gen_vel",
+    "stage.type"
+   ],
+   "cost_impact": "none",
+   "agent_guidance": "Set continuation=no + gen-vel=yes ONLY in the first NVT stage. Every later stage: continuation=yes + gen-vel=no, and pass the previous stage's .cpt to grompp with -t so velocities and box are carried over. Getting this wrong silently re-thermalizes the system and destroys the equilibration you paid for.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "stage.gen_vel",
+   "area": "output_analysis_and_protocol",
+   "label": "Generate velocities",
+   "meaning": "Draw fresh velocities from a Maxwell-Boltzmann distribution at gen-temp at the start of the stage.",
+   "mdp_key": null,
+   "type": "bool",
+   "unit": "none",
+   "default": "true in the first NVT stage, false everywhere else",
+   "options": [
+    "yes",
+    "no"
+   ],
+   "range": "",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "stage.continuation"
+   ],
+   "cost_impact": "none",
+   "agent_guidance": "Exactly one stage in a protocol should have gen-vel=yes. Currently md_mdp hardcodes yes, which re-randomizes velocities at the start of production \u2014 always override to no for production.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "stage.gen_seed",
+   "area": "output_analysis_and_protocol",
+   "label": "Velocity seed",
+   "meaning": "Random seed for Maxwell-Boltzmann velocity generation; -1 means 'pick a fresh random seed', which makes the run irreproducible.",
+   "mdp_key": null,
+   "type": "int",
+   "unit": "none",
+   "default": "explicit positive integer (e.g. 20260712), never -1",
+   "options": null,
+   "range": "-1 or 1 - 2147483647",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "stage.gen_vel"
+   ],
+   "cost_impact": "none",
+   "agent_guidance": "Always set an explicit seed and record it in the manifest so a result can be reproduced or a failure re-run identically. To build a replicate ensemble for statistics (the correct way to get error bars on a stability claim), submit N identical jobs differing only in gen_seed (e.g. 3-5 replicas).",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "stage.ld_seed",
+   "area": "output_analysis_and_protocol",
+   "label": "Langevin/stochastic seed",
+   "meaning": "Random seed for stochastic dynamics and stochastic thermostats (sd integrator, V-rescale, Berendsen-family noise).",
+   "mdp_key": null,
+   "type": "int",
+   "unit": "none",
+   "default": "explicit positive integer, never -1",
+   "options": null,
+   "range": "-1 or 1 - 2147483647",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "integrator",
+    "tcoupl"
+   ],
+   "cost_impact": "none",
+   "agent_guidance": "Set alongside gen_seed. With integrator=sd or tcoupl=V-rescale the trajectory depends on ld-seed even if gen-seed is fixed, so reproducibility requires BOTH.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "stage.restraints",
+   "area": "output_analysis_and_protocol",
+   "label": "Position restraints on",
+   "meaning": "Whether this stage applies harmonic position restraints to heavy atoms of the solute, holding the structure near its starting coordinates while the solvent relaxes around it.",
+   "mdp_key": null,
+   "type": "bool",
+   "unit": "none",
+   "default": "true for nvt and the first npt stage; false for production",
+   "options": [
+    "true",
+    "false"
+   ],
+   "range": "",
+   "applies_to": [
+    "protein",
+    "membrane"
+   ],
+   "depends_on": [
+    "topology posre.itp emitted by pdb2gmx",
+    "stage.type"
+   ],
+   "cost_impact": "Negligible (<1%).",
+   "agent_guidance": "pdb2gmx already writes posre.itp but nothing ever emits -DPOSRES, so restraints are currently dead. Turn them ON for NVT and NPT equilibration of any protein or protein-in-membrane system, and OFF for production. Never restrain during production unless the goal explicitly requires a fixed reference (e.g. a ligand-in-site sampling study).",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "stage.posre_fc",
+   "area": "output_analysis_and_protocol",
+   "label": "Position restraint force constant",
+   "meaning": "Harmonic spring constant tethering each restrained heavy atom to its reference position, per Cartesian direction.",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "kJ mol^-1 nm^-2",
+   "default": "1000",
+   "options": null,
+   "range": "10 - 10000",
+   "applies_to": [
+    "protein",
+    "membrane"
+   ],
+   "depends_on": [
+    "stage.restraints"
+   ],
+   "cost_impact": "none",
+   "agent_guidance": "Standard is 1000 on all protein heavy atoms. For a strained or homology/AlphaFold model, ramp restraints down across successive NPT stages (1000 -> 500 -> 200 -> 100 -> 0) to avoid a structural shock when they are released; this is the fix for 'protein blows up / RMSD jumps at t=0 of production'.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "stage.restraint_selection",
+   "area": "output_analysis_and_protocol",
+   "label": "Restrained group",
+   "meaning": "Which atoms carry the position restraints during equilibration.",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "none",
+   "default": "protein_heavy",
+   "options": [
+    "protein_heavy",
+    "protein_backbone",
+    "protein_ca",
+    "solute_heavy",
+    "lipid_phosphate",
+    "custom_index"
+   ],
+   "range": "",
+   "applies_to": [
+    "protein",
+    "membrane"
+   ],
+   "depends_on": [
+    "stage.restraints",
+    "index groups (gmx make_ndx)"
+   ],
+   "cost_impact": "none",
+   "agent_guidance": "Use protein_heavy for standard equilibration. Use protein_backbone or protein_ca when you deliberately want side chains to relax (e.g. after a mutation or a docking pose). For a bilayer with an embedded protein, restrain protein_heavy and let the lipids anneal around it.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "stage.refcoord_scaling",
+   "area": "output_analysis_and_protocol",
+   "label": "Reference coordinate scaling",
+   "meaning": "How the position-restraint reference coordinates are transformed when the barostat rescales the box; required for a physically consistent restrained-NPT stage.",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "none",
+   "default": "com",
+   "options": [
+    "no",
+    "all",
+    "com"
+   ],
+   "range": "",
+   "applies_to": [
+    "protein",
+    "membrane"
+   ],
+   "depends_on": [
+    "stage.restraints",
+    "pcoupl != no"
+   ],
+   "cost_impact": "none",
+   "agent_guidance": "MANDATORY whenever -DPOSRES and pressure coupling are both on \u2014 grompp warns and the restraints become nonsense with refcoord-scaling=no. Use com for a solute restrained in a box; all is acceptable for restrained solvent/lipids.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "stage.mdp_overrides",
+   "area": "output_analysis_and_protocol",
+   "label": "Raw mdp overrides",
+   "meaning": "Free-form dict of engine keys merged last into the stage's generated .mdp, providing an escape hatch for any of the 200+ GROMACS settings the ontology does not name.",
+   "mdp_key": null,
+   "type": "string",
+   "unit": "dict[str,str]",
+   "default": "{}",
+   "options": null,
+   "range": "",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [],
+   "cost_impact": "depends on the key",
+   "agent_guidance": "Prefer named ontology params \u2014 they are validated. Use overrides only for exotic keys (pull-*, annealing-*, disre*, freezegrps). Every override must be echoed into the manifest so the resolved physics is auditable; the current lab records params but never the resolved .mdp, which blocks self-correction.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "stage.maxh",
+   "area": "output_analysis_and_protocol",
+   "label": "mdrun wall-clock limit",
+   "meaning": "Hard wall-clock cap on the stage; mdrun writes a checkpoint and exits cleanly at the limit instead of being killed and losing all work.",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "hours",
+   "default": "unset (uncapped)",
+   "options": null,
+   "range": "0.05 - 48",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "scheduler budget"
+   ],
+   "cost_impact": "Caps wall time exactly; work up to the cap is preserved via the checkpoint.",
+   "agent_guidance": "Set this on every production stage when the user gives a GPU budget. Combine with stage.type=extend to chunk a long run: run 2 h, checkpoint, resubmit with -cpi. This is how you honor 'stay under my GPU budget' without throwing away the trajectory \u2014 the current kill-based pause/resume loses everything.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "stage.checkpoint_interval",
+   "area": "output_analysis_and_protocol",
+   "label": "Checkpoint interval",
+   "meaning": "How often mdrun writes the binary checkpoint (.cpt) containing coordinates, velocities, box, and coupling state needed for a bitwise-continuable restart.",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "minutes",
+   "default": "15",
+   "options": null,
+   "range": "1 - 60",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [],
+   "cost_impact": "Negligible; a checkpoint write is a few MB of I/O.",
+   "agent_guidance": "Lower to 5 min for jobs that may be preempted/paused by the scheduler. The checkpoint is what makes restart possible; without it a killed 10 ns run restarts from zero.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "stage.restart_from",
+   "area": "output_analysis_and_protocol",
+   "label": "Restart / continue from checkpoint",
+   "meaning": "Path to a previous stage's .cpt used to resume an interrupted stage (-cpi) or to seed the next stage's velocities and box (grompp -t).",
+   "mdp_key": null,
+   "type": "string",
+   "unit": "path",
+   "default": "previous stage's .cpt (auto)",
+   "options": null,
+   "range": "",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "stage.checkpoint_interval"
+   ],
+   "cost_impact": "Saves all previously computed steps.",
+   "agent_guidance": "On resume after pause/kill, always pass -cpi with -append so the xtc/edr continue rather than being overwritten. When simply chaining stages, pass the .cpt to grompp -t (not just the .gro) \u2014 a .gro alone drops velocities and silently forces re-thermalization.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "stage.extend_ps",
+   "area": "output_analysis_and_protocol",
+   "label": "Extend an existing run",
+   "meaning": "Lengthen an already-completed stage by editing its .tpr rather than restarting from scratch, so a run judged 'not converged' can be continued.",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "ps",
+   "default": "unset",
+   "options": null,
+   "range": "10 - 1e6",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "stage.restart_from"
+   ],
+   "cost_impact": "Adds exactly the requested time.",
+   "agent_guidance": "This is the agent's primary self-correction lever: if RMSD has not plateaued, or the MSD fit window is too short, or block averages of energy disagree, extend rather than re-run. Cheapest possible way to fix an under-converged result.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "em.integrator",
+   "area": "output_analysis_and_protocol",
+   "label": "Minimizer",
+   "meaning": "Which energy-minimization algorithm relaxes the starting structure's steric clashes before dynamics.",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "none",
+   "default": "steep",
+   "options": [
+    "steep",
+    "cg",
+    "l-bfgs"
+   ],
+   "range": "",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein",
+    "qm"
+   ],
+   "depends_on": [],
+   "cost_impact": "steep is cheapest per step; cg/l-bfgs converge in fewer steps but cost more per step and cannot be used with constraints/domain decomposition in all cases.",
+   "agent_guidance": "Use steep by default \u2014 it is robust against the huge forces in a freshly solvated box. If steep stalls above emtol, chain a short steep (few hundred steps) followed by cg to reach a tight emtol (e.g. for a QM-ready or normal-mode-ready structure). l-bfgs only for gas-phase/implicit systems (no domain decomposition).",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "em.emtol",
+   "area": "output_analysis_and_protocol",
+   "label": "Minimization force tolerance",
+   "meaning": "Convergence criterion: minimization stops when the maximum force on any atom falls below this value, so it measures how relaxed the structure is.",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "kJ mol^-1 nm^-1",
+   "default": "1000 (atomistic), 100-500 (Martini), 10 (pre-QM / normal modes)",
+   "options": null,
+   "range": "1 - 5000",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein",
+    "qm"
+   ],
+   "depends_on": [
+    "force_field",
+    "em.integrator"
+   ],
+   "cost_impact": "Tighter tolerance costs more steps; going from 1000 to 10 can be 10-100x more EM steps, but EM is minutes at most.",
+   "agent_guidance": "1000 is fine before MD \u2014 the thermostat will handle the rest. Tighten to 100-250 if the first NVT stage crashes with 'LINCS warning' or 'water molecule cannot be settled', which means the start structure was still clashing. Tighten to <=10 only when the minimized structure itself is the deliverable (QM handoff, normal modes).",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "em.emstep",
+   "area": "output_analysis_and_protocol",
+   "label": "Minimization initial step size",
+   "meaning": "Initial trial displacement of the steepest-descent minimizer; it is adapted upward on success and halved on failure.",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "nm",
+   "default": "0.01 (atomistic), 0.02 (Martini)",
+   "options": null,
+   "range": "0.001 - 0.05",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "em.integrator",
+    "force_field"
+   ],
+   "cost_impact": "Too large wastes steps on rejected moves; too small needs many more steps. Second-order effect only.",
+   "agent_guidance": "Leave at 0.01. Reduce to 0.001-0.005 if EM immediately reports 'Steepest Descents converged to machine precision' with a still-huge Fmax (a sign the very first step exploded on an overlapping atom). Coarse-grained beads tolerate 0.02-0.05.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "em.nsteps",
+   "area": "output_analysis_and_protocol",
+   "label": "Max minimization steps",
+   "meaning": "Upper bound on minimization iterations; the run stops at emtol or here, whichever comes first.",
+   "mdp_key": null,
+   "type": "int",
+   "unit": "steps",
+   "default": "50000",
+   "options": null,
+   "range": "100 - 200000",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [],
+   "cost_impact": "EM is cheap; even 50000 steps on a 50k-atom box is a few minutes on GPU.",
+   "agent_guidance": "Rarely worth touching. If EM exits on nsteps rather than emtol, that is a diagnostic: the structure is bad (clashing ligand, missing hydrogens, overlapping ions) \u2014 fix the build, do not just raise nsteps.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "em.converged_fmax",
+   "area": "output_analysis_and_protocol",
+   "label": "Reported Fmax (observable)",
+   "meaning": "The maximum force actually reached at the end of minimization, parsed from the EM log \u2014 the single best cheap predictor of whether the following dynamics will crash.",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "kJ mol^-1 nm^-1",
+   "default": "read-only observable",
+   "options": null,
+   "range": "",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "em.emtol"
+   ],
+   "cost_impact": "none",
+   "agent_guidance": "Record in the manifest summary. If Fmax > ~5x emtol at exit, do not submit production \u2014 re-minimize or rebuild. This is a gate the agent should check between stages.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "nstxout-compressed",
+   "area": "output_analysis_and_protocol",
+   "label": "Compressed trajectory write interval",
+   "meaning": "Number of integration steps between frames written to the compressed .xtc trajectory \u2014 this sets the time resolution of every structural analysis and the size of the trajectory file.",
+   "mdp_key": null,
+   "type": "int",
+   "unit": "steps",
+   "default": "derived from xtc_interval_ps / dt (typically 5000 steps = 10 ps at dt=0.002)",
+   "options": null,
+   "range": "0 (off) - 1e6",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "dt",
+    "xtc_interval_ps",
+    "stage.duration_ps",
+    "compressed-x-grps"
+   ],
+   "cost_impact": "Frame count = duration/interval. Each all-atom frame \u2248 3 bytes/atom at precision 1000; 50k atoms \u2248 150 kB/frame. Writing every step can cost 10-30% runtime in I/O and produce GB-scale files.",
+   "agent_guidance": "Set via the time-domain alias, not steps. Rule of thumb: keep 1000-5000 frames total for the stage (interval_ps \u2248 duration_ps/2000). RMSD/Rg/SASA/DSSP: 10-20 ps is plenty. RDF/density: 1-10 ps. H-bond lifetimes, MSD of water, PCA of fast modes: 0.5-2 ps. Never write every step for a 10 ns box unless you specifically need velocity/force autocorrelations.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "xtc_interval_ps",
+   "area": "output_analysis_and_protocol",
+   "label": "Trajectory write interval (time)",
+   "meaning": "Physical time between saved trajectory frames; the human/agent-facing form of nstxout-compressed.",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "ps",
+   "default": "10",
+   "options": null,
+   "range": "0.1 - 1000",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "dt"
+   ],
+   "cost_impact": "Inversely proportional to trajectory size and analysis I/O time.",
+   "agent_guidance": "Always express output in ps. Must satisfy interval_ps >= dt and ideally be an exact multiple of dt. If the requested analysis needs correlation times shorter than the interval (e.g. hbond lifetime, D from MSD), shrink it \u2014 a coarse interval silently makes those analyses garbage.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "compressed-x-precision",
+   "area": "output_analysis_and_protocol",
+   "label": "XTC coordinate precision",
+   "meaning": "Reciprocal of the coordinate rounding used by the lossy xtc compressor: 1000 means coordinates are stored to 1/1000 nm = 0.001 nm = 0.01 A.",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "1/nm",
+   "default": "1000",
+   "options": null,
+   "range": "100 - 10000",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "nstxout-compressed"
+   ],
+   "cost_impact": "File size scales roughly with log(precision); 10000 costs ~30-40% more bytes than 1000, 100 saves ~25%.",
+   "agent_guidance": "Leave at 1000 for all structural analysis (RMSD, RDF, SASA, H-bonds are insensitive to 0.001 nm noise). Raise to 10000 only if you will compute something sensitive to fine positions (e.g. numerically differentiating positions, or feeding coordinates back into a QM step). Lower to 100 only to shrink an archival membrane trajectory.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "nstenergy",
+   "area": "output_analysis_and_protocol",
+   "label": "Energy write interval",
+   "meaning": "Steps between writes of energies, temperature, pressure, box and density to the .edr file \u2014 this sets the sampling of every thermodynamic observable and of the equilibration diagnostics.",
+   "mdp_key": null,
+   "type": "int",
+   "unit": "steps",
+   "default": "derived from energy_interval_ps / dt (typically 500 steps = 1 ps)",
+   "options": null,
+   "range": "0 - 1e6",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "dt",
+    "nstcalcenergy"
+   ],
+   "cost_impact": "Very cheap: an .edr frame is ~100 bytes. Even 1 ps sampling of a 100 ns run is a few MB.",
+   "agent_guidance": "Sample energy MUCH more often than coordinates \u2014 it is nearly free and it is what you use to decide whether the system is equilibrated (density plateau, T/P mean and drift, potential-energy drift). 0.5-2 ps is right. Must be a multiple of nstcalcenergy (default 100) or grompp will adjust it. The current derived rule (nstenergy = nstxout/2) undersamples energy badly for long runs.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "energy_interval_ps",
+   "area": "output_analysis_and_protocol",
+   "label": "Energy write interval (time)",
+   "meaning": "Physical time between .edr energy frames; the agent-facing form of nstenergy.",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "ps",
+   "default": "1.0",
+   "options": null,
+   "range": "0.02 - 100",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "dt"
+   ],
+   "cost_impact": "negligible",
+   "agent_guidance": "Keep at 1 ps. Drop to 0.1 ps if you need a pressure autocorrelation (e.g. viscosity) \u2014 pressure is extremely noisy and needs dense sampling.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "nstcalcenergy",
+   "area": "output_analysis_and_protocol",
+   "label": "Energy computation interval",
+   "meaning": "How often global energies are actually computed (as opposed to written); it also gates the allowed values of nstenergy and forces a global communication step.",
+   "mdp_key": null,
+   "type": "int",
+   "unit": "steps",
+   "default": "100",
+   "options": null,
+   "range": "-1, 1 - 1000",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "nstenergy",
+    "nstlog"
+   ],
+   "cost_impact": "Setting it to 1 forces a global reduction every step and can cost 5-15% on GPU runs.",
+   "agent_guidance": "Leave at 100. Only lower it if you need energies at a finer interval than 100 steps; if you set nstenergy < nstcalcenergy, grompp silently changes nstcalcenergy for you and you lose GPU performance.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "nstlog",
+   "area": "output_analysis_and_protocol",
+   "label": "Log write interval",
+   "meaning": "Steps between human-readable energy/performance blocks in the .log file \u2014 the source of the performance number (ns/day) and of thermostat/barostat diagnostics.",
+   "mdp_key": null,
+   "type": "int",
+   "unit": "steps",
+   "default": "derived from log_interval_ps / dt (typically 5000 steps = 10 ps)",
+   "options": null,
+   "range": "0 - 1e6",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "dt",
+    "nstcalcenergy"
+   ],
+   "cost_impact": "negligible",
+   "agent_guidance": "Set to roughly the trajectory interval (10 ps). Its real value to the agent is the log's ns/day and load-imbalance report, which is how you decide whether to change GPU offload flags or accept the cost estimate. Must be a multiple of nstcalcenergy.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "nstxout",
+   "area": "output_analysis_and_protocol",
+   "label": "Full-precision trajectory interval",
+   "meaning": "Steps between frames written to the uncompressed .trr, which is the only file that can also carry velocities and forces.",
+   "mdp_key": null,
+   "type": "int",
+   "unit": "steps",
+   "default": "0 (off)",
+   "options": null,
+   "range": "0 - 1e6",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein",
+    "qm"
+   ],
+   "depends_on": [
+    "dt",
+    "nstvout",
+    "nstfout"
+   ],
+   "cost_impact": "HUGE: a .trr frame is ~12 bytes/atom for x alone, 24 with v, 36 with f \u2014 10-30x an xtc frame. Leave at 0.",
+   "agent_guidance": "Keep 0 in almost every case; the .xtc plus the final .gro/.cpt is enough. Turn it on only for: velocity autocorrelation / vibrational spectra (needs nstvout at 5-20 fs), force-matching or QM/MM handoff, or a normal-mode analysis. If you do turn it on, shorten the stage \u2014 this is a classic way to fill a disk.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "nstvout",
+   "area": "output_analysis_and_protocol",
+   "label": "Velocity write interval",
+   "meaning": "Steps between velocity frames in the .trr; needed for any dynamical quantity computed from velocities rather than positions.",
+   "mdp_key": null,
+   "type": "int",
+   "unit": "steps",
+   "default": "0 (off)",
+   "options": null,
+   "range": "0 - 1e6",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "qm"
+   ],
+   "depends_on": [
+    "nstxout"
+   ],
+   "cost_impact": "Doubles .trr size; dense settings (every 10 steps) generate GB/ns.",
+   "agent_guidance": "Only for VACF-based transport coefficients or IR spectra. Otherwise 0 \u2014 the checkpoint already preserves velocities for restarts, which is the only other reason people think they need this.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "nstfout",
+   "area": "output_analysis_and_protocol",
+   "label": "Force write interval",
+   "meaning": "Steps between force frames in the .trr.",
+   "mdp_key": null,
+   "type": "int",
+   "unit": "steps",
+   "default": "0 (off)",
+   "options": null,
+   "range": "0 - 1e6",
+   "applies_to": [
+    "qm",
+    "protein"
+   ],
+   "depends_on": [
+    "nstxout"
+   ],
+   "cost_impact": "Same order as nstvout; largest per-frame payload.",
+   "agent_guidance": "Essentially only for force-matching / coarse-grained parameterization or QM/MM validation. Never enable for a normal production run.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "compressed-x-grps",
+   "area": "output_analysis_and_protocol",
+   "label": "Groups written to the trajectory",
+   "meaning": "Restricts the .xtc to a subset of atoms (e.g. only the protein), which is the single biggest lever on trajectory size for a solvated system.",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "none",
+   "default": "System",
+   "options": [
+    "System",
+    "Protein",
+    "Non-Water",
+    "Protein_and_Ligand",
+    "Lipids",
+    "custom_index"
+   ],
+   "range": "",
+   "applies_to": [
+    "protein",
+    "membrane",
+    "solvent"
+   ],
+   "depends_on": [
+    "index groups (gmx make_ndx)",
+    "analyses requested"
+   ],
+   "cost_impact": "For a 50k-atom box with a 2k-atom protein, writing Protein only is ~25x smaller: a 10 ns run drops from ~200 MB to ~5-8 MB and analyses run 20x faster.",
+   "agent_guidance": "Set to Protein (or Non-Water) whenever the requested analyses are solute-only (RMSD, Rg, RMSF, SASA, DSSP, PCA). Do NOT set it if any requested analysis needs solvent: RDF involving water, water MSD/diffusion, density profiles, protein-water H-bonds, or PBC re-imaging that requires whole-system context. Decide this from the analysis list before submitting \u2014 it cannot be recovered afterwards.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "energygrps",
+   "area": "output_analysis_and_protocol",
+   "label": "Energy groups",
+   "meaning": "Splits the reported nonbonded energies into per-group and group-pair contributions (e.g. Protein-Water LJ and Coulomb) so interaction energies can be read from the .edr.",
+   "mdp_key": null,
+   "type": "string",
+   "unit": "group names",
+   "default": "unset",
+   "options": [
+    "Protein Water",
+    "Protein Ligand",
+    "Protein Non-Protein",
+    "POPC W"
+   ],
+   "range": "",
+   "applies_to": [
+    "protein",
+    "membrane",
+    "solvent"
+   ],
+   "depends_on": [
+    "index groups"
+   ],
+   "cost_impact": "On GPU this can force parts of the nonbonded work back to the CPU and cost 20-50% \u2014 GROMACS does not support energy-group decomposition in the GPU nonbonded kernels for all cases.",
+   "agent_guidance": "Avoid on GPU production runs. If the user wants a protein-ligand interaction energy, prefer a short CPU rerun (`gmx mdrun -rerun traj.xtc`) with energygrps set, over paying the cost for the whole production run. Note: these are NOT physical binding free energies \u2014 say so when reporting them.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "nstcomm",
+   "area": "output_analysis_and_protocol",
+   "label": "COM motion removal interval",
+   "meaning": "How often the center-of-mass drift of the system (or of comm-grps) is removed, preventing the 'flying ice cube' where the whole box acquires kinetic energy and internal degrees of freedom cool.",
+   "mdp_key": null,
+   "type": "int",
+   "unit": "steps",
+   "default": "100",
+   "options": null,
+   "range": "1 - 1000",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "comm-mode",
+    "nstcalcenergy"
+   ],
+   "cost_impact": "negligible",
+   "agent_guidance": "Leave at 100 (GROMACS ties it to nstcalcenergy). Only revisit if the log shows persistent COM drift or the temperature reported for a group looks systematically low.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "comm-mode",
+   "area": "output_analysis_and_protocol",
+   "label": "COM motion removal mode",
+   "meaning": "Which kind of bulk motion is removed: linear translation, translation+rotation (for a non-periodic cluster), or none.",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "none",
+   "default": "Linear",
+   "options": [
+    "Linear",
+    "Angular",
+    "None",
+    "Linear-acceleration-correction"
+   ],
+   "range": "",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein",
+    "qm"
+   ],
+   "depends_on": [
+    "pbc"
+   ],
+   "cost_impact": "negligible",
+   "agent_guidance": "Linear for any periodic box. Angular ONLY for a vacuum/implicit-solvent single molecule (pbc=no) \u2014 using Angular under PBC is wrong. Use Linear-acceleration-correction with sd/leap-frog + heavy COM removal if you see a slow energy drift.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "viewer.frame_cap",
+   "area": "output_analysis_and_protocol",
+   "label": "Viewer frame cap",
+   "meaning": "Maximum number of frames the engine down-samples the trajectory to when converting to the PDB the 3Dmol viewer loads; a presentation-only limit that must not affect analysis.",
+   "mdp_key": null,
+   "type": "int",
+   "unit": "frames",
+   "default": "150",
+   "options": null,
+   "range": "20 - 500",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein",
+    "cell"
+   ],
+   "depends_on": [],
+   "cost_impact": "Browser memory only; ~1-3 MB per 100 frames of a small system.",
+   "agent_guidance": "Never change this to get better statistics \u2014 analyses must run on the full .xtc, not the down-sampled viewer PDB. Raise only if the user complains the animation is choppy, and only for small systems.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "viewer.pbc_treatment",
+   "area": "output_analysis_and_protocol",
+   "label": "Trajectory PBC/centering for viewing and analysis",
+   "meaning": "How periodic images are undone before viewing or analysis: making molecules whole, keeping them in the box, and centering the solute \u2014 without this a protein appears split across the box edge and RMSD/Rg are nonsense.",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "none",
+   "default": "mol_center",
+   "options": [
+    "none",
+    "whole",
+    "mol",
+    "nojump",
+    "mol_center",
+    "cluster"
+   ],
+   "range": "",
+   "applies_to": [
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "stage.type",
+    "analysis kind"
+   ],
+   "cost_impact": "One extra pass over the trajectory; seconds to minutes.",
+   "agent_guidance": "Use a two-step canonical pipeline before analysis: (1) -pbc whole (or mol) -center -ur compact for structural analyses (RMSD, Rg, RMSF, SASA, DSSP, PCA); (2) -pbc nojump for anything involving displacement over time (MSD/diffusion) \u2014 using -pbc mol for MSD produces a catastrophically wrong D because molecules teleport across the box. RDF and density should be run on the raw trajectory with the analysis tool's own PBC handling, not on a re-imaged file.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "analysis.begin_ps",
+   "area": "output_analysis_and_protocol",
+   "label": "Analysis start time (discard equilibration)",
+   "meaning": "Trajectory time before which frames are discarded from an analysis, so that residual equilibration does not bias the average.",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "ps",
+   "default": "10% of production duration, or the observed density/RMSD plateau time",
+   "options": null,
+   "range": "0 - stage.duration_ps",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "stage.duration_ps",
+    "equilibration diagnostics"
+   ],
+   "cost_impact": "Fewer frames analyzed; slightly faster.",
+   "agent_guidance": "ALWAYS set this. Choose it by looking at the observable itself: for density/box use the .edr plateau; for a protein use the point where RMSD stops rising. Reporting an average over the first, un-relaxed nanosecond is the most common way to get a wrong number out of a technically successful run.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "analysis.end_ps",
+   "area": "output_analysis_and_protocol",
+   "label": "Analysis end time",
+   "meaning": "Trajectory time after which frames are ignored, used to analyze a sub-window (e.g. compare first vs second half as a convergence test).",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "ps",
+   "default": "end of trajectory",
+   "options": null,
+   "range": "analysis.begin_ps - stage.duration_ps",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "analysis.begin_ps"
+   ],
+   "cost_impact": "negligible",
+   "agent_guidance": "Use to implement the block/half-split convergence check: compute the observable on [t/2, 3t/4] and [3t/4, t]; if they disagree beyond their error bars, the run is not converged \u2014 extend it rather than reporting the number.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "analysis.stride_ps",
+   "area": "output_analysis_and_protocol",
+   "label": "Analysis frame stride",
+   "meaning": "Only read every Nth frame of the trajectory during analysis, trading statistics for speed.",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "ps",
+   "default": "trajectory interval (use every frame)",
+   "options": null,
+   "range": ">= xtc_interval_ps",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "xtc_interval_ps"
+   ],
+   "cost_impact": "Linear speedup of the analysis pass.",
+   "agent_guidance": "Leave at the native interval \u2014 analysis is cheap compared to the MD. Only stride for very large membrane trajectories, and never for correlation-based analyses (MSD, H-bond autocorrelation), where striding destroys the short-time behaviour you are fitting.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "analysis.block_count",
+   "area": "output_analysis_and_protocol",
+   "label": "Error estimation blocks",
+   "meaning": "Number of contiguous blocks the production window is split into for block averaging, giving a defensible error bar on any time-averaged observable.",
+   "mdp_key": null,
+   "type": "int",
+   "unit": "blocks",
+   "default": "5",
+   "options": null,
+   "range": "2 - 20",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "analysis.begin_ps",
+    "stage.duration_ps"
+   ],
+   "cost_impact": "none",
+   "agent_guidance": "Every scalar an agent reports (density, APL, mean Rg, D, mean RMSD) MUST come with a block-averaged uncertainty. A number without an error bar cannot support a claim like 'it stays folded'. Use >=5 blocks each longer than the observable's correlation time.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "analysis.rdf",
+   "area": "output_analysis_and_protocol",
+   "label": "Radial distribution function",
+   "meaning": "Probability of finding an atom of the selection group at distance r from the reference group, normalized by the ideal-gas density \u2014 the fingerprint of liquid structure and solvation shells.",
+   "mdp_key": null,
+   "type": "string",
+   "unit": "g(r) vs nm",
+   "default": "{ref: 'OW', sel: 'OW', bin: 0.002, rmax: min(1.5, 0.5*box), begin_ps: analysis.begin_ps, norm: 'rdf', selrpos: 'atom' }",
+   "options": [
+    "ref/sel = atom names, residue names, or index groups",
+    "norm: rdf | number_density | none",
+    "selrpos/seltype: atom | res_com | mol_com"
+   ],
+   "range": "",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane"
+   ],
+   "depends_on": [
+    "box size (rmax <= half the shortest box vector)",
+    "compressed-x-grps must include the solvent"
+   ],
+   "cost_impact": "Seconds to a few minutes; scales with frames x pairs.",
+   "agent_guidance": "rmax must not exceed half the smallest box vector \u2014 beyond that the RDF is contaminated by the minimum image and flattens artificially. Use bin=0.002 nm for water (to resolve the 0.28 nm first peak) and 0.01-0.02 nm for coarse-grained beads. For water use OW-OW; for ion solvation use NA-OW and read the first-shell coordination number by integrating 4*pi*rho*r^2*g(r) to the first minimum. Needs only 100-500 well-spaced frames to converge \u2014 do not run 10 ns just for an RDF.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "analysis.msd",
+   "area": "output_analysis_and_protocol",
+   "label": "Mean-square displacement / diffusion coefficient",
+   "meaning": "Average squared displacement of a selection versus lag time; its long-time slope gives the self-diffusion coefficient via the Einstein relation D = slope/(2*d).",
+   "mdp_key": null,
+   "type": "string",
+   "unit": "nm^2 vs ps; D in 1e-5 cm^2/s",
+   "default": "{sel: 'Water', type: '3D', beginfit_frac: 0.2, endfit_frac: 0.8, mol: false, pbc: 'nojump'}",
+   "options": [
+    "type: 3D | lateral_xy | x | y | z",
+    "mol: per-molecule COM (true) vs per-atom (false)"
+   ],
+   "range": "",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane"
+   ],
+   "depends_on": [
+    "viewer.pbc_treatment must be nojump",
+    "xtc_interval_ps (needs fine sampling)",
+    "stage.duration_ps (needs a long linear regime)"
+   ],
+   "cost_impact": "Seconds; but demands a long, densely sampled trajectory to be meaningful.",
+   "agent_guidance": "Three ways this goes wrong and the agent must guard all three: (1) trajectory not unwrapped -> use -pbc nojump; (2) fit window includes the ballistic/sub-diffusive short-time regime -> fit only the linear middle (roughly 20-80% of the max lag) and check the log-log slope is ~1; (3) too short a run -> D from <1 ns of lag is unreliable. For a membrane use type=lateral_xy with mol=true (lipid COM). Always correct/caveat the strong system-size (finite-size, Yeh-Hummer) dependence of D when reporting.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "analysis.rms",
+   "area": "output_analysis_and_protocol",
+   "label": "RMSD vs reference",
+   "meaning": "Root-mean-square deviation of the selection from a reference structure after least-squares fitting \u2014 the primary measure of whether a protein has stayed folded or drifted from its crystal structure.",
+   "mdp_key": null,
+   "type": "string",
+   "unit": "nm vs ns",
+   "default": "{fit_group: 'Backbone', calc_group: 'Backbone', reference: 'em.gro or start.pdb', tu: 'ns', pbc: 'whole'}",
+   "options": [
+    "fit_group / calc_group: Backbone | C-alpha | Protein | Protein-H | MainChain",
+    "reference: initial | minimized | external PDB",
+    "fit: rot+trans | translation | none | progressive"
+   ],
+   "range": "",
+   "applies_to": [
+    "protein",
+    "membrane"
+   ],
+   "depends_on": [
+    "viewer.pbc_treatment=whole/mol",
+    "analysis.begin_ps"
+   ],
+   "cost_impact": "Seconds.",
+   "agent_guidance": "This is the headline observable for the lysozyme-stability class of goals. Fit on Backbone and compute on Backbone (or C-alpha). Interpretation for a small globular protein at 300-310 K: plateau below ~0.2-0.25 nm = folded and stable; a monotonic rise that has not plateaued by the end = not converged, EXTEND; a step change to >0.4-0.5 nm = partial unfolding or a domain motion \u2014 inspect RMSF and DSSP before claiming unfolding. Always reference against the MINIMIZED structure and always discard equilibration. Never report a single mean RMSD without the time series and a plateau check.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "analysis.gyrate",
+   "area": "output_analysis_and_protocol",
+   "label": "Radius of gyration",
+   "meaning": "Mass-weighted RMS distance of the selection's atoms from its center of mass \u2014 a compactness measure that detects global expansion (unfolding) or collapse.",
+   "mdp_key": null,
+   "type": "string",
+   "unit": "nm vs ns",
+   "default": "{group: 'Protein', components: true, pbc: 'whole'}",
+   "options": [
+    "group: Protein | Backbone | C-alpha",
+    "components: also report Rg about x/y/z principal axes"
+   ],
+   "range": "",
+   "applies_to": [
+    "protein",
+    "membrane"
+   ],
+   "depends_on": [
+    "viewer.pbc_treatment=whole"
+   ],
+   "cost_impact": "Seconds.",
+   "agent_guidance": "Use as the independent cross-check on RMSD: a folded protein has a flat Rg (lysozyme \u2248 1.4-1.45 nm). RMSD up + Rg flat = a rigid-body/domain motion or a poor fit group, NOT unfolding. RMSD up + Rg up = genuine expansion. Report the pair together; the agent should never claim unfolding on RMSD alone. Enable components to detect anisotropic elongation.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "analysis.rmsf",
+   "area": "output_analysis_and_protocol",
+   "label": "Per-residue RMSF (fluctuations)",
+   "meaning": "Root-mean-square fluctuation of each atom/residue about its average position over the analysis window \u2014 a per-residue map of flexibility, comparable to crystallographic B-factors.",
+   "mdp_key": null,
+   "type": "string",
+   "unit": "nm per residue",
+   "default": "{group: 'C-alpha', res: true, fit: true, begin_ps: analysis.begin_ps, output_bfac: true}",
+   "options": [
+    "group: C-alpha | Backbone | Protein",
+    "res: average per residue",
+    "fit: least-squares fit to the reference first",
+    "output_bfac: write B-factors into a PDB"
+   ],
+   "range": "",
+   "applies_to": [
+    "protein",
+    "membrane"
+   ],
+   "depends_on": [
+    "analysis.begin_ps (must exclude equilibration)",
+    "analysis.rms (fit reference)"
+   ],
+   "cost_impact": "Seconds.",
+   "agent_guidance": "Run on the EQUILIBRATED window only \u2014 including equilibration inflates every residue's RMSF. Typical: 0.05-0.1 nm in secondary-structure cores, 0.2-0.4+ nm in loops and termini. Use it to localize what the RMSD is seeing: if the RMSD rise is entirely from the terminal residues, the fold is intact \u2014 say that explicitly. Compare to experimental B-factors via B = (8*pi^2/3)*RMSF^2 when a crystal structure is available.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "analysis.density",
+   "area": "output_analysis_and_protocol",
+   "label": "Density (bulk and profile)",
+   "meaning": "Either the scalar mass density of the box or a one-dimensional profile of density along an axis, sliced by group \u2014 the standard validation of a solvent box and the primary structural readout of a bilayer.",
+   "mdp_key": null,
+   "type": "string",
+   "unit": "kg/m^3 (bulk) or kg/m^3 vs nm (profile)",
+   "default": "{mode: 'bulk', axis: 'z', slices: 100, groups: ['System'], center: true}",
+   "options": [
+    "mode: bulk | profile",
+    "axis: x | y | z",
+    "dens: mass | number | charge | electron",
+    "groups: System | Water | POPC | Headgroups(P) | Tails | Protein"
+   ],
+   "range": "",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane"
+   ],
+   "depends_on": [
+    "ensemble must be NPT for a meaningful bulk density",
+    "compressed-x-grps must include all groups profiled"
+   ],
+   "cost_impact": "Seconds.",
+   "agent_guidance": "Bulk mode is the #1 equilibration gate: TIP3P/SPC-E water at 300 K and 1 bar must land at ~995-1000 kg/m^3. If your NPT density is off by more than ~1%, the force field/cutoff/DispCorr settings are wrong \u2014 stop and fix them before spending GPU on production. Profile mode (axis=z, center on the bilayer, groups = Water/Headgroups/Tails) gives the bilayer thickness (P-P peak separation) and is how you verify a membrane is intact and not interdigitated.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "analysis.hbond",
+   "area": "output_analysis_and_protocol",
+   "label": "Hydrogen bonds",
+   "meaning": "Counts and lifetimes of hydrogen bonds between two groups using a donor-acceptor distance and a hydrogen-donor-acceptor angle criterion.",
+   "mdp_key": null,
+   "type": "string",
+   "unit": "count vs ns; lifetime in ps",
+   "default": "{donor_group: 'Protein', acceptor_group: 'Protein', r_cut: 0.35, angle_cut: 30, lifetime: false}",
+   "options": [
+    "group pairs: Protein-Protein | Protein-Water | Water-Water | Protein-Ligand",
+    "r_cut (donor-acceptor distance)",
+    "angle_cut (H-D-A angle)",
+    "lifetime: compute the autocorrelation"
+   ],
+   "range": "",
+   "applies_to": [
+    "solvent",
+    "protein",
+    "membrane"
+   ],
+   "depends_on": [
+    "compressed-x-grps must contain BOTH groups (water H-bonds need water in the xtc)",
+    "xtc_interval_ps <= 2 ps for lifetimes"
+   ],
+   "cost_impact": "Minutes on a large solvated system; the pair search is the expensive part.",
+   "agent_guidance": "Use the conventional geometric criteria (0.35 nm, 30 deg) unless the user asks otherwise \u2014 changing them changes the count and makes the number incomparable to the literature. Intra-protein H-bond count is a sensitive, cheap unfolding detector: a persistent drop tracks secondary-structure loss and corroborates DSSP. For LIFETIMES you must have saved frames at <=1-2 ps \u2014 if the trajectory interval is 10 ps, refuse to report a lifetime and rerun with finer output instead of producing a meaningless number.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "analysis.sasa",
+   "area": "output_analysis_and_protocol",
+   "label": "Solvent-accessible surface area",
+   "meaning": "Area of the solute surface reachable by the center of a spherical solvent probe, optionally split into hydrophobic and hydrophilic contributions and reported per residue.",
+   "mdp_key": null,
+   "type": "string",
+   "unit": "nm^2 vs ns",
+   "default": "{group: 'Protein', probe_radius: 0.14, output: ['total','hydrophobic','per_residue'], ndots: 24}",
+   "options": [
+    "probe_radius (0.14 nm = water)",
+    "output: total | hydrophobic | hydrophilic | per_residue | per_atom | volume",
+    "ndots: surface point density"
+   ],
+   "range": "",
+   "applies_to": [
+    "protein",
+    "membrane"
+   ],
+   "depends_on": [
+    "viewer.pbc_treatment=whole",
+    "analysis.begin_ps"
+   ],
+   "cost_impact": "Minutes for a large protein at high ndots; scales with frames x atoms x ndots.",
+   "agent_guidance": "Third leg of the folded/unfolded triad (with RMSD and Rg): unfolding exposes buried hydrophobic surface, so a rising HYDROPHOBIC SASA is a much more specific unfolding signal than total SASA. Keep probe_radius at 0.14 nm (water) for comparability. Raise ndots to 100-200 only if the curve is visibly noisy; 24 is fine for time series.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "analysis.dssp",
+   "area": "output_analysis_and_protocol",
+   "label": "Secondary structure (DSSP)",
+   "meaning": "Per-residue, per-frame assignment of secondary structure (helix, sheet, turn, coil) from backbone H-bond geometry \u2014 the most direct, interpretable evidence of whether a fold is retained.",
+   "mdp_key": null,
+   "type": "string",
+   "unit": "structure class vs (residue, time)",
+   "default": "{group: 'Protein', hmode: 'gromacs', output: ['per_residue_matrix','fraction_vs_time'], cutoff: 0.9}",
+   "options": [
+    "hmode: gromacs | dssp (recompute H positions)",
+    "clear_structure / pp_based helix assignment"
+   ],
+   "range": "",
+   "applies_to": [
+    "protein"
+   ],
+   "depends_on": [
+    "compressed-x-grps must include the full protein backbone incl. H or allow H reconstruction",
+    "viewer.pbc_treatment=whole"
+   ],
+   "cost_impact": "Seconds to minutes.",
+   "agent_guidance": "For 'does it stay folded', DSSP is the claim-grade evidence and RMSD is the screening signal. Report the total helix+sheet fraction versus time: a stable plateau within a few percent of the starting value = folded. Loss concentrated in one terminal helix = local fraying, not unfolding \u2014 state that distinction. Requires an all-atom trajectory of the protein, so do not set compressed-x-grps to C-alpha-only if DSSP is requested.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "analysis.pca",
+   "area": "output_analysis_and_protocol",
+   "label": "Principal component analysis (essential dynamics)",
+   "meaning": "Diagonalizes the covariance matrix of atomic fluctuations to extract the few collective modes that carry most of the motion, and projects the trajectory onto them to reveal the conformational landscape.",
+   "mdp_key": null,
+   "type": "string",
+   "unit": "eigenvalues in nm^2; projections in nm",
+   "default": "{group: 'C-alpha', fit_group: 'Backbone', n_eigenvectors: 10, projections: [1,2], cosine_content: true, begin_ps: analysis.begin_ps}",
+   "options": [
+    "group: C-alpha | Backbone (mass-weighted)",
+    "outputs: eigenvalue spectrum | 2D projection (PC1 vs PC2) | extreme-structure PDB | cosine content"
+   ],
+   "range": "",
+   "applies_to": [
+    "protein"
+   ],
+   "depends_on": [
+    "analysis.begin_ps",
+    "stage.duration_ps (needs far more sampling than RMSD)",
+    "viewer.pbc_treatment=whole + rot/trans fit"
+   ],
+   "cost_impact": "covar builds a 3N x 3N matrix: use C-alpha only (N ~ hundreds) \u2014 full-atom covar on a large protein is memory-heavy and slow.",
+   "agent_guidance": "Compute PCA on C-alpha atoms after removing global rotation/translation, on the equilibrated window only. ALWAYS report the cosine content of PC1: a value near 1 means the 'collective mode' is indistinguishable from random diffusion, i.e. the trajectory is too short and the PCA is an artifact \u2014 in that case extend the run instead of interpreting the modes. This is the standard trap and the agent must check it.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "analysis.free_energy",
+   "area": "output_analysis_and_protocol",
+   "label": "Alchemical free energy protocol",
+   "meaning": "A lambda-staged protocol that gradually decouples a molecule's interactions with its environment across a ladder of lambda windows, from which a free-energy difference (solvation or binding) is estimated by BAR/MBAR.",
+   "mdp_key": null,
+   "type": "string",
+   "unit": "kJ/mol (or kcal/mol)",
+   "default": "{couple_moltype: 'LIG', windows: 20, vdw_lambdas: 11, coul_lambdas: 5, sc_alpha: 0.5, sc_power: 1, sc_sigma: 0.3, nstdhdl: 10, estimator: 'BAR', equil_ps: 500, sample_ps: 5000}",
+   "options": [
+    "estimator: BAR | MBAR | TI",
+    "couple-intramol: no | yes",
+    "init-lambda-state per window",
+    "calc-lambda-neighbors: -1 (all, for MBAR) | 1 (BAR)"
+   ],
+   "range": "",
+   "applies_to": [
+    "solvent",
+    "protein"
+   ],
+   "depends_on": [
+    "one MD job PER lambda window (this multiplies the GPU cost by the window count)",
+    "stage.dt",
+    "separate topology with a couplable moltype"
+   ],
+   "cost_impact": "MASSIVE: cost = n_windows x (equil + sample). 20 windows x 5 ns = 100 ns of MD for one number. This is the most expensive thing in the lab.",
+   "agent_guidance": "Treat as a fan-out of independent jobs, one per lambda state, sharing everything but init-lambda-state \u2014 this maps naturally onto the scheduler queue and is the only way to fit it in a GPU budget. Rules that must not be broken: (1) turn OFF charges before vdW (decouple coulomb first, then vdW) or you get catastrophic overlaps; (2) soft-core (sc-alpha=0.5, sc-power=1, sc-sigma=0.3) is MANDATORY for the vdW ladder or lambda~1 windows will explode; (3) set nstdhdl=10 and calc-lambda-neighbors=-1 if you intend to use MBAR; (4) check the phase-space overlap matrix from gmx bar \u2014 poor overlap between adjacent windows means you must ADD windows, not run longer. Before proposing this, tell the user the total GPU cost up front; it is easy to burn a week of GPU here.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "analysis.energy_terms",
+   "area": "output_analysis_and_protocol",
+   "label": "Energy terms to extract",
+   "meaning": "Which .edr fields are pulled into the manifest time series \u2014 the thermodynamic evidence that the run was physically sound.",
+   "mdp_key": null,
+   "type": "string",
+   "unit": "list[term]",
+   "default": "['Potential','Kinetic-En.','Total-Energy','Temperature','Pressure','Density','Box-X','Volume','Constr.-rmsd']",
+   "options": [
+    "Potential",
+    "Kinetic-En.",
+    "Total-Energy",
+    "Conserved-En.",
+    "Temperature",
+    "Pressure",
+    "Density",
+    "Volume",
+    "Box-X/Y/Z",
+    "LJ-(SR)",
+    "Coulomb-(SR)",
+    "Coul.-recip.",
+    "Disper.-corr.",
+    "Pres.-DC",
+    "Constr.-rmsd",
+    "Pot.-Energy-of-the-protein via energygrps"
+   ],
+   "range": "",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "nstenergy",
+    "ensemble (Density/Volume only vary under NPT)"
+   ],
+   "cost_impact": "Seconds.",
+   "agent_guidance": "Always extract Conserved-En. and Constr.-rmsd in addition to the obvious terms \u2014 they are the two cheapest correctness gates in all of MD. A drifting Conserved-En. means the timestep/cutoff/thermostat combination is unsound (shrink dt or fix the cutoffs); a Constr.-rmsd above ~1e-5 means LINCS is failing and the run is untrustworthy no matter how pretty the RMSD plot looks. Check Temperature mean == ref-t and Pressure mean == ref-p (pressure is very noisy; judge only the mean over >=1 ns, never an instantaneous value).",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "gate.equilibrated",
+   "area": "output_analysis_and_protocol",
+   "label": "Equilibration gate (derived observable)",
+   "meaning": "A boolean decision, computed from the .edr, that the system has reached a steady state and production is worth starting or analyzing: density/volume plateaued, temperature at the setpoint, potential energy no longer trending, and (for proteins) RMSD flattened.",
+   "mdp_key": null,
+   "type": "bool",
+   "unit": "none",
+   "default": "computed",
+   "options": [
+    "checks: density_drift | temperature_mean | potential_energy_drift | rmsd_plateau | constr_rmsd | conserved_energy_drift"
+   ],
+   "range": "",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein"
+   ],
+   "depends_on": [
+    "analysis.energy_terms",
+    "analysis.rms",
+    "analysis.block_count"
+   ],
+   "cost_impact": "none",
+   "agent_guidance": "The agent should evaluate this gate BETWEEN stages, not only at the end. If NPT has not plateaued, lengthen NPT rather than starting production. If production's first half and second half disagree on the observable of interest, extend rather than report. This gate plus stage.extend_ps is the entire self-correction loop.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "provenance.record_mdp",
+   "area": "output_analysis_and_protocol",
+   "label": "Record resolved .mdp and versions in the manifest",
+   "meaning": "Store the fully resolved per-stage .mdp text, seeds, force field, GROMACS version, and command lines in run.json so a result can be reproduced, audited, and diffed against a failed run.",
+   "mdp_key": null,
+   "type": "bool",
+   "unit": "none",
+   "default": "true",
+   "options": null,
+   "range": "",
+   "applies_to": [
+    "fluid",
+    "solvent",
+    "membrane",
+    "protein",
+    "qm",
+    "cell"
+   ],
+   "depends_on": [
+    "stage.mdp_overrides"
+   ],
+   "cost_impact": "A few kB per run.",
+   "agent_guidance": "Non-negotiable for an agent-driven lab: without the resolved .mdp the agent cannot answer 'what was different about the run that worked', cannot reproduce a result, and cannot diff a crashed run against a healthy one. Also record the mdrun performance line (ns/day) \u2014 it is the empirical basis for every future cost estimate.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "forcefield",
+   "area": "system_build_and_forcefield",
+   "label": "Force field",
+   "meaning": "The parameter set giving every atom its charge, van der Waals radius and bonded terms. It is the single biggest determinant of whether the physics is right.",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "dimensionless",
+   "default": "amber99sb-ildn",
+   "options": [
+    "amber03",
+    "amber14sb",
+    "amber19sb",
+    "amber94",
+    "amber96",
+    "amber99",
+    "amber99sb",
+    "amber99sb-ildn",
+    "amberGS",
+    "charmm27",
+    "gromos43a1",
+    "gromos43a2",
+    "gromos45a3",
+    "gromos53a5",
+    "gromos53a6",
+    "gromos54a7",
+    "oplsaa"
+   ],
+   "range": "",
+   "applies_to": [
+    "protein",
+    "solvent",
+    "membrane"
+   ],
+   "depends_on": [],
+   "cost_impact": "",
+   "agent_guidance": "amber99sb-ildn or amber14sb for proteins; charmm27 if the user asks for CHARMM; martini3 ONLY for coarse-grained membranes (it needs a totally different mdp regime). Never mix a Martini force field with atomistic cutoffs.",
+   "stage_scope": "build"
+  },
+  {
+   "key": "water_model",
+   "area": "system_build_and_forcefield",
+   "label": "Water model",
+   "meaning": "Which rigid water geometry/charge set is used for the solvent. Sets the density you should expect.",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "dimensionless",
+   "default": "tip3p",
+   "options": [
+    "spc",
+    "spce",
+    "tip3p",
+    "tip4p",
+    "tip4pew",
+    "tip5p"
+   ],
+   "range": "",
+   "applies_to": [
+    "solvent",
+    "protein",
+    "membrane"
+   ],
+   "depends_on": [
+    "forcefield"
+   ],
+   "cost_impact": "",
+   "agent_guidance": "tip3p pairs with amber/charmm; spce gives a better bulk density (~998). Expect ~985-1010 kg/m3 in NPT; if you get 1100+, the box or ion count is wrong.",
+   "stage_scope": "build"
+  },
+  {
+   "key": "structure_source",
+   "area": "system_build_and_forcefield",
+   "label": "Structure source",
+   "meaning": "Where the starting coordinates come from: an experimental PDB entry, an AlphaFold prediction, or a local file.",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "dimensionless",
+   "default": "rcsb",
+   "options": [
+    "rcsb",
+    "alphafold",
+    "file",
+    "none"
+   ],
+   "range": "",
+   "applies_to": [
+    "protein"
+   ],
+   "depends_on": [],
+   "cost_impact": "",
+   "agent_guidance": "Use rcsb with a 4-character PDB id (1AKI). Use alphafold with a UniProt id (P69905) when no experimental structure exists.",
+   "stage_scope": "build"
+  },
+  {
+   "key": "pdb_id",
+   "area": "system_build_and_forcefield",
+   "label": "PDB / UniProt id",
+   "meaning": "The identifier fetched from the chosen database.",
+   "mdp_key": null,
+   "type": "string",
+   "unit": "dimensionless",
+   "default": "1AKI",
+   "options": null,
+   "range": "",
+   "applies_to": [
+    "protein"
+   ],
+   "depends_on": [
+    "structure_source"
+   ],
+   "cost_impact": "",
+   "agent_guidance": "1AKI lysozyme, 1UBQ ubiquitin, 1L2Y Trp-cage, 6LU7 SARS-CoV-2 protease.",
+   "stage_scope": "build"
+  },
+  {
+   "key": "box_shape",
+   "area": "system_build_and_forcefield",
+   "label": "Box shape",
+   "meaning": "Periodic cell geometry. A dodecahedron holds the same solute in ~29% less solvent than a cube, so it is ~29% cheaper for the same minimum-image distance.",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "dimensionless",
+   "default": "dodecahedron",
+   "options": [
+    "cubic",
+    "dodecahedron",
+    "octahedron",
+    "triclinic"
+   ],
+   "range": "",
+   "applies_to": [
+    "protein",
+    "solvent"
+   ],
+   "depends_on": [],
+   "cost_impact": "dodecahedron ~0.71x the atoms of cubic",
+   "agent_guidance": "Prefer dodecahedron for a globular protein \u2014 it is strictly cheaper for the same physics. Use cubic for a plain solvent box or a membrane.",
+   "stage_scope": "build"
+  },
+  {
+   "key": "box_padding_nm",
+   "area": "system_build_and_forcefield",
+   "label": "Solute-to-edge distance",
+   "meaning": "Minimum distance from any solute atom to the box wall. Must exceed the cutoff, or the protein sees its own periodic image.",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "nm",
+   "default": 1.2,
+   "options": null,
+   "range": "0.8 - 2.0",
+   "applies_to": [
+    "protein"
+   ],
+   "depends_on": [
+    "rvdw",
+    "rcoulomb"
+   ],
+   "cost_impact": "atoms grow ~ (L+2d)^3; going 1.0 -> 1.5 nm can nearly double the system",
+   "agent_guidance": "Must be >= rcoulomb (typically 1.0 nm). 1.2 nm is a safe default. Below 1.0 nm you risk self-interaction artefacts.",
+   "stage_scope": "build"
+  },
+  {
+   "key": "box_size_nm",
+   "area": "system_build_and_forcefield",
+   "label": "Explicit box edge",
+   "meaning": "Edge length for a solvent-only box, when there is no solute to pad around.",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "nm",
+   "default": 3.0,
+   "options": null,
+   "range": "1.8 - 12.0",
+   "applies_to": [
+    "solvent",
+    "fluid"
+   ],
+   "depends_on": [],
+   "cost_impact": "atoms ~ L^3",
+   "agent_guidance": "Must be > 2 x cutoff (so > 2.0 nm for a 1.0 nm cutoff).",
+   "stage_scope": "build"
+  },
+  {
+   "key": "salt_conc_M",
+   "area": "system_build_and_forcefield",
+   "label": "Salt concentration",
+   "meaning": "Molar concentration of added NaCl-type salt, on top of any counter-ions needed for neutrality.",
+   "mdp_key": null,
+   "type": "float",
+   "unit": "mol/L",
+   "default": 0.15,
+   "options": null,
+   "range": "0.0 - 2.0",
+   "applies_to": [
+    "protein",
+    "solvent"
+   ],
+   "depends_on": [],
+   "cost_impact": "",
+   "agent_guidance": "0.15 M is physiological. Ion count = conc * V_box(nm^3) * 0.6022 (NOT 6.022e-4 \u2014 that error is 1000x and would make every system look unsalted).",
+   "stage_scope": "build"
+  },
+  {
+   "key": "neutralize",
+   "area": "system_build_and_forcefield",
+   "label": "Neutralise net charge",
+   "meaning": "Add counter-ions until the system's total charge is exactly zero. PME requires this; a charged box under PME silently adds a neutralising background jelly and distorts energetics.",
+   "mdp_key": null,
+   "type": "bool",
+   "unit": "dimensionless",
+   "default": true,
+   "options": null,
+   "range": "",
+   "applies_to": [
+    "protein",
+    "solvent"
+   ],
+   "depends_on": [
+    "coulombtype"
+   ],
+   "cost_impact": "",
+   "agent_guidance": "Always true when coulombtype=PME. The net charge must be MEASURED from pdb2gmx's reported qtot, never guessed from sequence.",
+   "stage_scope": "build"
+  },
+  {
+   "key": "ion_positive",
+   "area": "system_build_and_forcefield",
+   "label": "Cation",
+   "meaning": "Species used for positive ions.",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "dimensionless",
+   "default": "NA",
+   "options": [
+    "NA",
+    "K",
+    "CA",
+    "MG"
+   ],
+   "range": "",
+   "applies_to": [
+    "protein",
+    "solvent"
+   ],
+   "depends_on": [],
+   "cost_impact": "",
+   "agent_guidance": "",
+   "stage_scope": "build"
+  },
+  {
+   "key": "ion_negative",
+   "area": "system_build_and_forcefield",
+   "label": "Anion",
+   "meaning": "Species used for negative ions.",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "dimensionless",
+   "default": "CL",
+   "options": [
+    "CL"
+   ],
+   "range": "",
+   "applies_to": [
+    "protein",
+    "solvent"
+   ],
+   "depends_on": [],
+   "cost_impact": "",
+   "agent_guidance": "",
+   "stage_scope": "build"
+  },
+  {
+   "key": "ignore_hydrogens",
+   "area": "system_build_and_forcefield",
+   "label": "Rebuild hydrogens",
+   "meaning": "Discard hydrogens present in the input file and let pdb2gmx add them per the force field. Crystal structures rarely have usable hydrogens.",
+   "mdp_key": null,
+   "type": "bool",
+   "unit": "dimensionless",
+   "default": true,
+   "options": null,
+   "range": "",
+   "applies_to": [
+    "protein"
+   ],
+   "depends_on": [],
+   "cost_impact": "",
+   "agent_guidance": "Keep true for X-ray structures. Set false only if the input already has correct, force-field-consistent hydrogens (e.g. a previous GROMACS output).",
+   "stage_scope": "build"
+  },
+  {
+   "key": "posres_fc_kj",
+   "area": "system_build_and_forcefield",
+   "label": "Position-restraint force constant",
+   "meaning": "Spring constant tethering restrained atoms to their starting positions during equilibration, so the solvent relaxes around a solute that is not yet allowed to move.",
+   "mdp_key": "define",
+   "type": "float",
+   "unit": "kJ/mol/nm^2",
+   "default": 1000.0,
+   "options": null,
+   "range": "0 - 10000",
+   "applies_to": [
+    "protein",
+    "membrane"
+   ],
+   "depends_on": [],
+   "cost_impact": "",
+   "agent_guidance": "1000 during NVT/NPT equilibration; 0 (no restraints) in production. Ramping 1000 -> 500 -> 0 over successive stages is gentler for fragile systems.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "define",
+   "area": "system_build_and_forcefield",
+   "label": "Preprocessor defines",
+   "meaning": "C-preprocessor flags passed to grompp, which switch on #ifdef blocks in the topology. -DPOSRES activates the position-restraint itp that pdb2gmx wrote.",
+   "mdp_key": "define",
+   "type": "string",
+   "unit": "dimensionless",
+   "default": "",
+   "options": null,
+   "range": "",
+   "applies_to": [
+    "protein",
+    "membrane",
+    "solvent"
+   ],
+   "depends_on": [
+    "posres_fc_kj"
+   ],
+   "cost_impact": "",
+   "agent_guidance": "Set automatically to '-DPOSRES' when a stage has posres_fc_kj > 0. grompp then also needs -r <reference.gro>.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "posres_selection",
+   "area": "system_build_and_forcefield",
+   "label": "Restrained atom set",
+   "meaning": "Which atoms feel the position restraint.",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "dimensionless",
+   "default": "Protein-H",
+   "options": [
+    "Protein-H",
+    "Backbone",
+    "CA",
+    "Protein"
+   ],
+   "range": "",
+   "applies_to": [
+    "protein"
+   ],
+   "depends_on": [
+    "posres_fc_kj"
+   ],
+   "cost_impact": "",
+   "agent_guidance": "Protein-H (all heavy atoms) is standard for equilibration. Backbone/CA are looser and let side chains relax.",
+   "stage_scope": "stage"
+  },
+  {
+   "key": "lipid",
+   "area": "system_build_and_forcefield",
+   "label": "Lipid type",
+   "meaning": "Which phospholipid builds the coarse-grained bilayer.",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "dimensionless",
+   "default": "POPC",
+   "options": [
+    "POPC",
+    "DPPC",
+    "DOPC",
+    "POPE",
+    "DLPC"
+   ],
+   "range": "",
+   "applies_to": [
+    "membrane"
+   ],
+   "depends_on": [
+    "forcefield"
+   ],
+   "cost_impact": "",
+   "agent_guidance": "Only valid with forcefield=martini3. Expect area-per-lipid ~0.64 nm2 for POPC.",
+   "stage_scope": "build"
+  },
+  {
+   "key": "qm_method",
+   "area": "system_build_and_forcefield",
+   "label": "QM method",
+   "meaning": "Level of quantum theory for the QM region.",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "dimensionless",
+   "default": "HF",
+   "options": [
+    "HF",
+    "B3LYP",
+    "PBE",
+    "MP2"
+   ],
+   "range": "",
+   "applies_to": [
+    "qm"
+   ],
+   "depends_on": [],
+   "cost_impact": "B3LYP/MP2 are far more expensive than HF; MP2 scales ~N^5",
+   "agent_guidance": "HF/sto-3g for a fast sanity check; B3LYP/6-31g for anything quantitative.",
+   "stage_scope": "build"
+  },
+  {
+   "key": "qm_basis",
+   "area": "system_build_and_forcefield",
+   "label": "Basis set",
+   "meaning": "Size of the atomic-orbital basis; the main QM accuracy/cost dial.",
+   "mdp_key": null,
+   "type": "choice",
+   "unit": "dimensionless",
+   "default": "sto-3g",
+   "options": [
+    "sto-3g",
+    "6-31g",
+    "6-31g*",
+    "cc-pvdz"
+   ],
+   "range": "",
+   "applies_to": [
+    "qm"
+   ],
+   "depends_on": [],
+   "cost_impact": "cost ~ N_basis^4 (HF); sto-3g is a toy, 6-31g* is a minimum for real numbers",
+   "agent_guidance": "sto-3g overestimates HOMO-LUMO gaps badly. Use 6-31g* if the user cares about energies.",
+   "stage_scope": "build"
+  },
+  {
+   "key": "qm_charge",
+   "area": "system_build_and_forcefield",
+   "label": "QM total charge",
+   "meaning": "Net charge of the quantum region.",
+   "mdp_key": null,
+   "type": "int",
+   "unit": "e",
+   "default": 0,
+   "options": null,
+   "range": "-4 - 4",
+   "applies_to": [
+    "qm"
+   ],
+   "depends_on": [],
+   "cost_impact": "",
+   "agent_guidance": "",
+   "stage_scope": "build"
+  },
+  {
+   "key": "qm_spin",
+   "area": "system_build_and_forcefield",
+   "label": "QM spin multiplicity",
+   "meaning": "2S+1 for the quantum region; 1 = closed shell.",
+   "mdp_key": null,
+   "type": "int",
+   "unit": "dimensionless",
+   "default": 1,
+   "options": null,
+   "range": "1 - 5",
+   "applies_to": [
+    "qm"
+   ],
+   "depends_on": [],
+   "cost_impact": "",
+   "agent_guidance": "Must be 1 for RHF/RKS. A radical or O2 needs >1 and an unrestricted method.",
+   "stage_scope": "build"
+  }
+ ]
+}

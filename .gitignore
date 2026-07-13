@@ -1,0 +1,22 @@
+# environments / deps
+.venv/
+uicheck/node_modules/
+__pycache__/
+*.pyc
+
+# simulation output (GB of trajectories — regenerate by running)
+simulations/runs/
+simulations/_jobs/
+data/structures/
+
+# downloaded force fields (fetched by labkit/data/build_ontology.py + Martini setup)
+assets/martini/
+
+# vendored Mol* bundle (5 MB, unused after we standardised on 3Dmol)
+viewer/static/molstar.js
+viewer/static/molstar.css
+viewer/static/molstar-view.js
+
+# screenshots / scratch
+uicheck/*.png
+*.log

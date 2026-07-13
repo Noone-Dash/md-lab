@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Evals · MD Lab</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <a class="back" href="/">←</a>
+      <span class="logo">✅</span>
+      <div>
+        <div class="title">Physics Evals</div>
+        <div class="subtitle">real simulations, graded against values physics already knows</div>
+      </div>
+    </div>
+    <nav class="tabs">
+      <button id="run-all" class="tab" style="background:var(--panel);border-color:var(--line)">▶ Run all benchmarks</button>
+      <a class="tab" href="/chat">💬 Ask the lab</a>
+    </nav>
+  </header>
+
+  <main class="explore">
+    <p class="muted" style="max-width:800px">
+      Every benchmark below <b>actually runs a simulation</b> and compares a measured number to an
+      independent reference — experiment, neutron scattering, or a textbook quantum result. If the
+      lab starts lying, these go red. This is how you know it isn't a demo.
+    </p>
+    <div id="summary" class="eval-summary"></div>
+    <div id="list" class="eval-list"></div>
+  </main>
+
+  <script src="/static/evals.js"></script>
+</body>
+</html>

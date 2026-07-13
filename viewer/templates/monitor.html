@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Monitor · MD Lab</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <a class="back" href="/" title="All tracks">←</a>
+      <span class="logo">📊</span>
+      <div>
+        <div class="title">Compute Monitor</div>
+        <div class="subtitle" id="backend">scheduler</div>
+      </div>
+    </div>
+    <div class="scale-note">single-node queue · systemd + cgroups v2 (kernel-enforced caps)</div>
+  </header>
+
+  <main class="mon">
+    <!-- live telemetry -->
+    <section class="tele" id="tele"></section>
+
+    <!-- budget / caps -->
+    <section class="budget-box">
+      <h2>Compute budget <span class="muted" id="budget-derived"></span></h2>
+      <p class="muted">Caps are enforced by the kernel (cgroups). Jobs beyond the
+        budget queue instead of overwhelming the machine.</p>
+      <div class="budget-grid" id="budget-grid"></div>
+      <button id="apply-budget" class="launch" style="max-width:200px">Apply budget</button>
+    </section>
+
+    <!-- job registry -->
+    <section class="registry">
+      <div class="reg-head">
+        <h2>Jobs</h2>
+        <button id="clear" class="ctrl" style="width:auto;padding:0 12px">clear finished</button>
+      </div>
+      <div class="reg-table" id="reg-table"></div>
+    </section>
+  </main>
+
+  <script src="/static/monitor.js"></script>
+</body>
+</html>

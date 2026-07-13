@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Structure Explorer · MD Lab</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/3Dmol-min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <a class="back" href="/" title="Home">←</a>
+      <span class="logo">🔬</span>
+      <div>
+        <div class="title">Structure Explorer</div>
+        <div class="subtitle">load any real molecule from the PDB or AlphaFold — no simulation needed</div>
+      </div>
+    </div>
+    <nav class="tabs"><a class="tab" href="/monitor">📊 Monitor</a></nav>
+  </header>
+
+  <main class="explore">
+    <div class="exp-bar">
+      <select id="db">
+        <option value="pdb">RCSB PDB (experimental)</option>
+        <option value="alphafold">AlphaFold (predicted)</option>
+      </select>
+      <input type="text" id="pid" placeholder="e.g. 1AKI  or  P69905" value="1AKI">
+      <select id="style">
+        <option value="cartoon">cartoon</option>
+        <option value="surface">surface</option>
+        <option value="ballstick">ball &amp; stick</option>
+        <option value="sphere">spheres</option>
+      </select>
+      <button id="load">Load structure</button>
+      <label class="check"><input type="checkbox" id="spin" checked> spin</label>
+      <span id="status" class="muted"></span>
+    </div>
+
+    <div class="chips-row" id="examples"></div>
+    <div id="exp-viewer"></div>
+    <div class="exp-info" id="info"></div>
+  </main>
+
+  <script src="/static/explore.js"></script>
+</body>
+</html>

@@ -1,0 +1,1 @@
+{"name":"mdlab-uicheck","version":"1.0.0","private":true,"description":"Headless-browser screenshot + console check. ALWAYS run before claiming the UI works.","scripts":{"shot":"node shot.js"},"dependencies":{"playwright":"^1.61.1"}}

@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GROMACS Lab</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/3Dmol-min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">⬡</span>
+      <div>
+        <div class="title">GROMACS&nbsp;Lab</div>
+        <div class="subtitle" id="gmxver">molecular dynamics playground</div>
+      </div>
+    </div>
+    <nav class="tabs">
+      <button class="tab active" data-tab="new">＋ New simulation</button>
+      <button class="tab" data-tab="runs">Runs</button>
+    </nav>
+  </header>
+
+  <main class="layout">
+    <!-- LEFT: recipe catalogue + parameter form + runs -->
+    <aside class="sidebar">
+      <section id="panel-new" class="panel">
+        <h2>Choose a system</h2>
+        <div id="recipe-cards" class="recipe-cards"></div>
+        <form id="param-form" class="param-form hidden">
+          <h3 id="form-title"></h3>
+          <p id="form-desc" class="muted"></p>
+          <div id="param-fields"></div>
+          <button type="submit" class="launch">▶ Launch simulation</button>
+        </form>
+      </section>
+
+      <section id="panel-runs" class="panel hidden">
+        <h2>Runs</h2>
+        <div id="runs-list" class="runs-list"></div>
+      </section>
+    </aside>
+
+    <!-- RIGHT: the selected run -->
+    <section class="stage">
+      <div id="empty-state" class="empty">
+        <div class="empty-inner">
+          <div class="empty-logo">⬢</div>
+          <p>Pick a system on the left, set the knobs, and launch.<br>
+             Your trajectory and live plots will appear here.</p>
+        </div>
+      </div>
+
+      <div id="run-view" class="run-view hidden">
+        <div class="run-head">
+          <div>
+            <h2 id="run-title"></h2>
+            <div id="run-params" class="chips"></div>
+          </div>
+          <div id="run-status" class="status"></div>
+        </div>
+
+        <div id="steps" class="steps"></div>
+
+        <div class="viewer-block">
+          <div id="viewer" class="viewer"></div>
+          <div class="viewer-controls">
+            <button id="play" class="ctrl" title="Play / pause">▶</button>
+            <input id="frame" type="range" min="0" max="0" value="0" class="frame-slider">
+            <span id="frame-label" class="frame-label">0 / 0</span>
+            <label class="sel">Style
+              <select id="style">
+                <option value="auto">auto</option>
+                <option value="sphere">spheres</option>
+                <option value="ballstick">ball &amp; stick</option>
+                <option value="cartoon">cartoon</option>
+                <option value="line">lines</option>
+              </select>
+            </label>
+            <label class="sel">Speed
+              <select id="speed">
+                <option value="240">slow</option>
+                <option value="120" selected>normal</option>
+                <option value="40">fast</option>
+              </select>
+            </label>
+            <label class="check"><input type="checkbox" id="spin"> spin</label>
+            <label class="check"><input type="checkbox" id="box" checked> box</label>
+          </div>
+        </div>
+
+        <div id="plots" class="plots"></div>
+
+        <details class="logbox">
+          <summary>Live log</summary>
+          <pre id="log"></pre>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/plot.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

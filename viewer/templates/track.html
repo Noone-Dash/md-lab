@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ tname }} · MD Lab</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/3Dmol-min.js"></script>
+  <script>window.TRACK_ID = "{{ tid }}"; window.TRACK_NAME = "{{ tname }}";</script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <a class="back" href="/" title="All tracks">←</a>
+      <span class="logo">{{ ticon }}</span>
+      <div>
+        <div class="title">{{ tname }}</div>
+        <div class="subtitle" id="track-engine">MD Lab</div>
+      </div>
+    </div>
+    <nav class="tabs">
+      <button class="tab active" data-tab="new">＋ New run</button>
+      <button class="tab" data-tab="runs">Runs</button>
+      <a class="tab" href="/monitor">📊 Monitor</a>
+    </nav>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <section id="panel-new" class="panel">
+        <h2>Experiments</h2>
+        <div id="recipe-cards" class="recipe-cards"></div>
+        <form id="param-form" class="param-form hidden">
+          <h3 id="form-title"></h3>
+          <p id="form-desc" class="muted"></p>
+          <div id="param-fields"></div>
+          <div id="unavailable-note" class="unavailable-note hidden"></div>
+          <button type="submit" class="launch">▶ Launch</button>
+        </form>
+      </section>
+      <section id="panel-runs" class="panel hidden">
+        <h2>Runs</h2>
+        <div id="runs-list" class="runs-list"></div>
+      </section>
+    </aside>
+
+    <section class="stage">
+      <div id="empty-state" class="empty">
+        <div class="empty-inner">
+          <div class="empty-logo">{{ ticon }}</div>
+          <p>Choose an experiment, set the parameters, and launch.<br>
+             The 3D trajectory and plots appear here.</p>
+        </div>
+      </div>
+
+      <div id="run-view" class="run-view hidden">
+        <div class="run-head">
+          <div>
+            <h2 id="run-title"></h2>
+            <div id="run-params" class="chips"></div>
+          </div>
+          <div class="run-head-right">
+            <div id="run-engine" class="engine-badge"></div>
+            <div id="run-status" class="status"></div>
+          </div>
+        </div>
+
+        <div id="steps" class="steps"></div>
+        <div id="summary" class="summary hidden"></div>
+
+        <div class="viewer-block">
+          <div id="viewer-stage" class="viewer-stage">
+            <div id="viewer" class="viewer"></div>
+            <div id="vlegend" class="v-overlay v-tl"></div>
+            <div id="vinfo" class="v-overlay v-tr"></div>
+            <div id="vcaption" class="v-caption"></div>
+            <div id="vloading" class="v-loading hidden"></div>
+            <div class="v-cambar">
+              <button id="zoom-in" class="ctrl" title="Zoom in">＋</button>
+              <button id="zoom-out" class="ctrl" title="Zoom out">－</button>
+              <button id="reset-view" class="ctrl" title="Reset view">⟳</button>
+              <button id="fs" class="ctrl" title="Fullscreen">⛶</button>
+            </div>
+          </div>
+          <div id="viewer-molstar" class="viewer molstar-host hidden"></div>
+
+          <!-- playback -->
+          <div class="viewer-controls">
+            <button id="play" class="ctrl" title="Play / pause">▶</button>
+            <input id="frame" type="range" min="0" max="0" value="0" class="frame-slider">
+            <span id="frame-label" class="frame-label">0 / 0</span>
+            <label class="sel">Speed
+              <select id="speed">
+                <option value="240">slow</option>
+                <option value="120" selected>normal</option>
+                <option value="40">fast</option>
+              </select>
+            </label>
+          </div>
+
+          <!-- representation toolbar -->
+          <div class="viewer-controls rep-bar">
+            <label class="sel">Representation
+              <select id="style">
+                <option value="auto">auto</option>
+                <option value="sphere">spheres</option>
+                <option value="ballstick">ball &amp; stick</option>
+                <option value="stick">sticks</option>
+                <option value="cartoon">cartoon</option>
+                <option value="line">lines</option>
+              </select>
+            </label>
+            <label class="sel">Colour by
+              <select id="color">
+                <option value="auto">auto</option>
+                <option value="element">element</option>
+                <option value="spectrum">chain position (rainbow)</option>
+                <option value="ss">secondary structure</option>
+                <option value="bfactor">B-factor</option>
+              </select>
+            </label>
+            <label class="sel">Surface
+              <select id="surface">
+                <option value="none">none</option>
+                <option value="vdw">van der Waals</option>
+                <option value="sas">solvent-accessible</option>
+              </select>
+            </label>
+            <label class="sel">Opacity
+              <input id="surfop" type="range" min="0.1" max="1" step="0.05" value="0.7" style="width:80px">
+            </label>
+            <label class="sel">Labels
+              <select id="labels">
+                <option value="none">none</option>
+                <option value="residues">residues</option>
+              </select>
+            </label>
+            <span class="rep-sep"></span>
+            <label class="check"><input type="checkbox" id="hide-water"> hide water</label>
+            <label class="check"><input type="checkbox" id="hide-ions"> hide ions</label>
+            <label class="check"><input type="checkbox" id="hide-h"> hide H</label>
+            <label class="check"><input type="checkbox" id="show-box"> unit cell</label>
+            <label class="check"><input type="checkbox" id="spin"> spin</label>
+          </div>
+          <div class="measure-bar">
+            <span class="muted">Click any two atoms to measure a distance.</span>
+            <span id="measure-out"></span>
+            <button id="clear-picks" class="jbtn">clear</button>
+          </div>
+        </div>
+
+        <div id="plots" class="plots"></div>
+
+        <details class="logbox">
+          <summary>Live log</summary>
+          <pre id="log"></pre>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/plot.js"></script>
+  <script src="/static/viewer3d.js"></script>
+  <script src="/static/lab.js"></script>
+</body>
+</html>
