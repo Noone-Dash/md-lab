@@ -75,7 +75,18 @@ def run_campaign(plan_dict: dict, run_id: str, target_ns: float, progress_cb=Non
 
     # ---- build the system ONCE; later launches reuse it ---------------------
     built = run_dir / ".built"
-    dt_ps = 0.002
+    # dt was hardcoded to 0.002. resolve() picks dt from the force field (Martini runs at
+    # 0.02 ps), so -nsteps computed from a constant made the campaign run for the wrong
+    # amount of PHYSICAL TIME -- 10x short for a coarse-grained system. Take it from the
+    # plan that will actually run.
+    from .plan.resolve import resolve
+    _res = resolve(plan)
+    _dyn = [st for st in _res["stages"] if st["stage"]["type"] == "dynamics"] \
+        if _res["stages"] and "stage" in _res["stages"][0] else []
+    try:
+        dt_ps = float(_res["stages"][-1]["mdp"]["dt"])
+    except (KeyError, IndexError, TypeError, ValueError):
+        dt_ps = 0.002
     total_steps = int(round(target_ns * 1000.0 / dt_ps))
 
     if not built.exists():

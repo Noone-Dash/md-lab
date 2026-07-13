@@ -1,0 +1,1 @@
+solution structure of the third zinc finger from bklf mol_id: 1; molecule: kruppel-like factor 3; chain: a; fragment: residues 9-37; synonym: bf3, bklf; engineered: yes

@@ -18,7 +18,10 @@ FF_WATER_ITP = {"spce": "spce", "spc": "spc", "tip3p": "tip3p",
 
 ANALYSES = {
     "rmsd": lambda o: Analysis("rmsd", "Backbone RMSD vs start",
-        ["rms", "-s", o["tpr"], "-f", o["xtc"], "-o", "rmsd.xvg", "-tu", "ns"],
+        # -tu ps, NOT ns: every other series in the manifest (all energy terms) is in ps,
+        # and metrics.uncertainty() infers dt from the x-axis. With -tu ns the RMSD dt came
+        # out 1000x too small and tau_int_ps was reported 1000x too small with it.
+        ["rms", "-s", o["tpr"], "-f", o["xtc"], "-o", "rmsd.xvg", "-tu", "ps"],
         "rmsd.xvg", stdin="Backbone\nBackbone\n",
         help="How far the structure drifts from the starting pose."),
     "gyrate": lambda o: Analysis("gyrate", "Radius of gyration (compactness)",

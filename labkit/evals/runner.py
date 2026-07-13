@@ -50,11 +50,16 @@ def _run_one(b, progress=None):
     # too short to decide — and it must say so rather than reporting a bare number.
     unc = uncertainty(m, b["metric"])
     if unc and verdict in ("PASS", "FAIL"):
-        lo, hi = unc["ci95"]
-        inside = exp["min"] <= lo and hi <= exp["max"]
-        outside = hi < exp["min"] or lo > exp["max"]
-        if not (inside or outside):
-            verdict = "INCONCLUSIVE"       # the CI straddles the acceptance boundary
+        if not unc.get("resolvable"):
+            # We could not put a defensible error bar on this. Say so; do not dress a
+            # point estimate up as a verified one.
+            verdict += "*"                 # e.g. PASS* — unquantified uncertainty
+        else:
+            lo, hi = unc["ci95"]
+            inside = exp["min"] <= lo and hi <= exp["max"]
+            outside = hi < exp["min"] or lo > exp["max"]
+            if not (inside or outside):
+                verdict = "INCONCLUSIVE"   # the CI straddles the acceptance boundary
 
     res = {
         "id": b["id"], "title": b["title"], "why": b["why"],
@@ -69,8 +74,9 @@ def _run_one(b, progress=None):
     if unc:
         res["uncertainty"] = {k: (round(v, 4) if isinstance(v, float) else v)
                               for k, v in unc.items() if k != "ci95"}
-        res["ci95"] = [round(unc["ci95"][0], 4), round(unc["ci95"][1], 4)]
-        res["sem"] = round(unc["sem"], 4)
+        if unc.get("resolvable"):
+            res["ci95"] = [round(unc["ci95"][0], 4), round(unc["ci95"][1], 4)]
+            res["sem"] = round(unc["sem"], 4)
     return res
 
 
@@ -84,10 +90,14 @@ def run(ids=None, progress=None):
         out.append(r)
         if progress:
             progress({"phase": "done_one", "i": i, "n": len(todo), "result": r})
+    # PASS* / FAIL* = the verdict holds, but the run was too short to put a defensible
+    # error bar on it. Match on the stem, or a starred pass silently counts as not-passed.
     summary = {
         "total": len(out),
-        "passed": sum(1 for r in out if r["status"] == "PASS"),
-        "failed": sum(1 for r in out if r["status"] == "FAIL"),
+        "passed": sum(1 for r in out if r["status"].rstrip("*") == "PASS"),
+        "failed": sum(1 for r in out if r["status"].rstrip("*") == "FAIL"),
+        "inconclusive": sum(1 for r in out if r["status"] == "INCONCLUSIVE"),
+        "unquantified": sum(1 for r in out if r["status"].endswith("*")),
         "errored": sum(1 for r in out if r["status"] in ("ERROR", "NO DATA")),
         "results": out,
     }
@@ -112,9 +122,21 @@ if __name__ == "__main__":
         if p["phase"] == "running" else None))
     print()
     for r in s["results"]:
-        mark = {"PASS": "PASS", "FAIL": "FAIL", "ERROR": "ERR ", "NO DATA": "NODATA"}[r["status"]]
-        meas = f"{r['measured']} {r['unit']}" if r.get("measured") is not None else r.get("detail", "-")
-        print(f"  {mark}  {r['title']:<42} measured {str(meas):<22} expect {r.get('expected','-')}  ({r['seconds']}s)")
+        # .get, not [] — an unlisted verdict used to raise KeyError and crash the report
+        # AFTER every real simulation had already been run.
+        mark = {"PASS": "PASS", "FAIL": "FAIL", "ERROR": "ERR ", "NO DATA": "NODATA",
+                "INCONCLUSIVE": "INCONC", "PASS*": "PASS*", "FAIL*": "FAIL*",
+                }.get(r["status"], r["status"][:6])
+        if r.get("sem") is not None:
+            meas = f"{r['measured']} ± {r['sem']} {r['unit']}"
+        elif r.get("measured") is not None:
+            meas = f"{r['measured']} {r['unit']} (no error bar)"
+        else:
+            meas = r.get("detail", "-")
+        print(f"  {mark:<7}{r['title']:<42} measured {str(meas):<28} "
+              f"expect {r.get('expected','-')}  ({r['seconds']}s)")
+    print("\n  * = the run was too short relative to its own correlation time to put a\n"
+          "      defensible error bar on the number. The verdict is a point estimate.")
     print(f"\n  {s['passed']}/{s['total']} passed"
           + (f", {s['failed']} FAILED" if s["failed"] else "")
           + (f", {s['errored']} errored" if s["errored"] else ""))

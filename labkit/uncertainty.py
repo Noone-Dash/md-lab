@@ -136,47 +136,85 @@ def blocking(y):
     return float(plateau), curve
 
 
-def stats(y, dt_ps: float = None) -> dict:
-    """Mean of a correlated series WITH an honest error bar.
+# A run must contain at least this many INDEPENDENT samples before we are willing to
+# put a number on its uncertainty. Below it, tau_int itself is not estimable and every
+# error bar -- by either method -- is fiction.
+MIN_N_EFF = 25
+MIN_BLOCK_LEVELS = 4
 
-    Returns mean, sem (autocorrelation-corrected), the naive sem it replaces, tau_int,
-    the effective sample size, the 95% CI, and the blocking cross-check.
+
+def stats(y, dt_ps: float = None) -> dict:
+    """Mean of a correlated series WITH an honest error bar -- or an explicit REFUSAL.
+
+    A too-narrow error bar is worse than no error bar: it converts "we cannot tell" into
+    a confident claim. So this REFUSES (sem = nan) rather than guessing when the run is
+    shorter than its own correlation time.
     """
     y = np.asarray([v for v in y if v is not None], dtype=float)
     n = len(y)
     if n < 8:
         m = float(y.mean()) if n else float("nan")
-        return {"mean": m, "sem": float("nan"), "n": n,
-                "note": "too few samples for an error bar"}
+        return {"mean": m, "sem": float("nan"), "n": n, "resolvable": False,
+                "note": f"n={n}: too few samples for any error bar"}
 
     mean = float(y.mean())
     sd = float(y.std(ddof=1))
     tau, window = tau_int_sokal(y)
-    sem = sd * math.sqrt(2.0 * tau / n)
     n_eff = n / (2.0 * tau)
+    sem_sokal = sd * math.sqrt(2.0 * tau / n)
     sem_block, curve = blocking(y)
+    levels = len(curve)
 
-    # The two estimators are independent. If they disagree by more than 2x, the run is
-    # too short for its own correlation time and NEITHER bar should be trusted.
-    agree = (math.isfinite(sem_block) and sem > 0
-             and 0.5 <= sem_block / sem <= 2.0)
+    # ---------------------------------------------------------------------------
+    # WHY THERE IS NO "estimators_agree" FLAG ANY MORE.
+    #
+    # There used to be one, and it was WORSE than useless: it was True in 100% of
+    # trials at every N and every phi. The reason is structural. When the run is short
+    # relative to tau:
+    #     - Sokal's window (w >= c*tau) never opens, so tau collapses to its 0.5 floor
+    #       and sem_sokal degenerates to the naive sigma/sqrt(N);
+    #     - blocking() has < 2 levels, so sem_block IS sigma/sqrt(N) by construction.
+    # Both estimators then return the SAME naive number and "agree" -- precisely in the
+    # regime the flag existed to catch. Measured: AR(1) phi=0.9, N=16 -> reported SEM is
+    # 0.17x of truth (6x too narrow) with agree=True in 500/500 seeds.
+    #
+    # Two estimators that fail in the same way are not a cross-check. The fix is not a
+    # better comparison, it is an ABSOLUTE resolvability requirement.
+    # ---------------------------------------------------------------------------
+    resolvable = (n_eff >= MIN_N_EFF and levels >= MIN_BLOCK_LEVELS
+                  and window < n / 4)
 
-    return {
+    # Be CONSERVATIVE where they differ. Sokal's c=5 window closes on the fast mode of a
+    # multi-timescale ACF and can miss a small-amplitude slow one (see self_test's
+    # two-exponential case: it understated the SEM ~3x). Blocking sees the slow mode.
+    # Taking the larger of the two costs a slightly wider bar and removes that failure.
+    sem = max(sem_sokal, sem_block) if math.isfinite(sem_block) else sem_sokal
+
+    out = {
         "mean": mean,
-        "sem": sem,                                  # equation (4)
+        "sem": sem if resolvable else float("nan"),
         "sem_naive": sd / math.sqrt(n),              # equation (1) — the one that lies
-        "inflation": sem / (sd / math.sqrt(n)) if sd > 0 else 1.0,   # = sqrt(2*tau)
-        "sem_blocking": sem_block,                   # independent cross-check
-        "estimators_agree": bool(agree),
+        "sem_sokal": sem_sokal,
+        "sem_blocking": sem_block,
+        "inflation": (sem / (sd / math.sqrt(n))) if sd > 0 else 1.0,
         "tau_int": tau,                              # in samples
         "tau_int_ps": tau * dt_ps if dt_ps else None,
         "window": window,
+        "blocking_levels": levels,
         "n": n,
         "n_eff": n_eff,                              # equation (5)
-        "ci95": [mean - 1.96 * sem, mean + 1.96 * sem],
         "sd": sd,
+        "resolvable": bool(resolvable),
         "blocking_curve": [(int(s), float(e)) for s, e, _ in curve],
     }
+    if resolvable:
+        out["ci95"] = [mean - 1.96 * sem, mean + 1.96 * sem]
+    else:
+        out["note"] = (f"REFUSED: n_eff={n_eff:.1f} (need >={MIN_N_EFF}), "
+                       f"{levels} blocking level(s) (need >={MIN_BLOCK_LEVELS}). "
+                       f"The run is too short relative to its own correlation time "
+                       f"(tau_int={tau:.1f} samples) for ANY defensible error bar.")
+    return out
 
 
 def time_for_precision(s: dict, target_sem: float, dt_ps: float) -> float:
@@ -240,6 +278,100 @@ def self_test(seed: int = 7) -> bool:
     return ok
 
 
+def _ar1(rng, phi, n):
+    eps = rng.normal(size=n)
+    x = np.empty(n)
+    x[0] = eps[0] / math.sqrt(1 - phi**2) if phi else eps[0]
+    for t in range(1, n):
+        x[t] = phi * x[t - 1] + eps[t]
+    return x
+
+
+def self_test_multiscale(seed: int = 11) -> bool:
+    """AR(1) is a SINGLE exponential — the one family where Sokal's c=5 window is safe.
+    Real MD observables are not: fast thermal noise rides on a slow structural mode.
+    The old estimator closed its window on the fast mode and missed the slow one.
+
+        x_t = iid_noise + a * s_t,     s_t = AR(1) with phi -> tau_slow
+
+    rho(k) = w * phi^k with w = a^2*var(s) / (1 + a^2*var(s)), so
+        tau_int = 0.5 + w * phi/(1-phi)      -- closed form, exact.
+    """
+    rng = np.random.default_rng(seed)
+    print(f"\n{'a':>5}{'phi':>6}{'tau_true':>10}{'sokal':>9}{'blocking->':>12}"
+          f"{'SEM_true':>10}{'SEM_rep':>9}{'ratio':>8}")
+    print("-" * 70)
+    ok = True
+    for a, phi in ((0.3, 0.99), (0.5, 0.98), (0.2, 0.995)):
+        n = 400_000
+        s_slow = _ar1(rng, phi, n)
+        x = rng.normal(size=n) + a * s_slow
+        var_s = 1.0 / (1 - phi**2)
+        w = (a**2 * var_s) / (1.0 + a**2 * var_s)          # slow mode's share of variance
+        tau_true = 0.5 + w * phi / (1 - phi)
+        var_x = 1.0 + a**2 * var_s
+        sem_true = math.sqrt(2 * tau_true * var_x / n)
+        st = stats(x)
+        ratio = st["sem"] / sem_true
+        good = 0.75 <= ratio <= 1.35
+        ok &= good
+        print(f"{a:>5.1f}{phi:>6.3f}{tau_true:>10.1f}{st['sem_sokal']:>9.5f}"
+              f"{st['sem_blocking']:>12.5f}{sem_true:>10.5f}{st['sem']:>9.5f}"
+              f"{ratio:>7.2f}x{'' if good else '  <-- FAIL'}")
+    print("-" * 70)
+    print("The reported SEM is max(sokal, blocking). Sokal alone understates a slow mode")
+    print("that carries only a few % of the variance; blocking sees it.")
+    return ok
+
+
+def self_test_refusal(seed: int = 3) -> bool:
+    """The estimator must REFUSE when the run is shorter than its own correlation time.
+
+    This is the case the old 'estimators_agree' cross-check certified as FINE: at N=16
+    with tau=9.5 it reported a SEM 6x too narrow and agree=True in 500/500 seeds.
+    """
+    rng = np.random.default_rng(seed)
+    phi = 0.9
+    tau_true = (1 + phi) / (2 * (1 - phi))            # 9.5
+    print(f"\n  AR(1) phi={phi} (tau_int = {tau_true} samples, known exactly)")
+    print(f"  {'N':>7}{'n_eff':>8}{'blocks':>8}{'reported':>12}   verdict")
+    print("  " + "-" * 52)
+    ok = True
+    for n in (16, 32, 64, 256, 2000, 20000):
+        sems = []
+        refused = 0
+        for k in range(60):
+            st = stats(_ar1(rng, phi, n))
+            refused += (not st["resolvable"])
+            if st["resolvable"]:
+                sems.append(st["sem"])
+        st = stats(_ar1(rng, phi, n))
+        var_x = 1.0 / (1 - phi**2)
+        sem_true = math.sqrt(2 * tau_true * var_x / n)
+        frac_ref = refused / 60
+        if frac_ref > 0.5:
+            verdict, good = "REFUSED (correct: too short)", n <= 256
+            rep = "     —"
+        else:
+            med = float(np.median(sems))
+            r = med / sem_true
+            verdict = f"reported, {r:.2f}x of truth"
+            good = 0.75 <= r <= 1.4
+            rep = f"{med:.4f}"
+        ok &= good
+        print(f"  {n:>7}{st['n_eff']:>8.1f}{st['blocking_levels']:>8}{rep:>12}   "
+              f"{verdict}{'' if good else '  <-- FAIL'}")
+    print("  " + "-" * 52)
+    print("  A run too short for its own correlation time now gets NO error bar,")
+    print("  instead of a confident one that is 6x too narrow.")
+    return ok
+
+
 if __name__ == "__main__":
     import sys
-    sys.exit(0 if self_test() else 1)
+    a = self_test()
+    b = self_test_multiscale()
+    c = self_test_refusal()
+    print(f"\n{'ALL PASS' if (a and b and c) else 'FAIL'}  "
+          f"(single-exponential: {a}, multi-timescale: {b}, short-run refusal: {c})")
+    sys.exit(0 if (a and b and c) else 1)

@@ -136,7 +136,14 @@ def mdrun_flags() -> list:
     flags = []
     if info.get("mpi") == "thread_mpi":
         flags += ["-ntmpi", "1"]         # thread-MPI builds only
-    flags += ["-ntomp", str(allowed_cores())]
+    # Honour the per-JOB budget the scheduler already passed down, not the whole
+    # allocation. A cgroup CPUQuota caps CPU *time*, not affinity, so sched_getaffinity
+    # in the child still reports every core on the node: two concurrent jobs would each
+    # spawn node-wide OpenMP threads and thrash. child_env() exports OMP_NUM_THREADS =
+    # cores_per_job, so that is the number to trust when it is set.
+    n = os.environ.get("OMP_NUM_THREADS")
+    nt = int(n) if n and n.isdigit() and int(n) > 0 else allowed_cores()
+    flags += ["-ntomp", str(min(nt, allowed_cores()))]
     return flags
 
 
@@ -163,10 +170,22 @@ def allowed_mem_gb() -> float:
     per_cpu = os.environ.get("SLURM_MEM_PER_CPU")            # MB
     if per_cpu and per_cpu.isdigit():
         return int(per_cpu) * allowed_cores() / 1024.0
-    try:                                                     # cgroup v2
-        v = Path("/sys/fs/cgroup/memory.max").read_text().strip()
-        if v != "max":
-            return int(v) / 1024**3
+    try:                                                     # cgroup v2: OUR cgroup
+        rel = ""
+        for line in Path("/proc/self/cgroup").read_text().splitlines():
+            if line.startswith("0::"):
+                rel = line[3:].strip().lstrip("/")
+                break
+        node = Path("/sys/fs/cgroup") / rel
+        while True:                                          # walk up to the first limit
+            f = node / "memory.max"
+            if f.exists():
+                v = f.read_text().strip()
+                if v != "max":
+                    return int(v) / 1024**3
+            if node == Path("/sys/fs/cgroup") or Path("/sys/fs/cgroup") not in node.parents:
+                break
+            node = node.parent
     except Exception:  # noqa: BLE001
         pass
     try:

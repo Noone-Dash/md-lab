@@ -437,7 +437,7 @@ class Protein(Recipe):
     def analyses(self, run_dir, p):
         return [
             Analysis("rmsd", "Backbone RMSD vs start",
-                     ["rms", "-s", "md.tpr", "-f", "md.xtc", "-o", "rmsd.xvg", "-tu", "ns"],
+                     ["rms", "-s", "md.tpr", "-f", "md.xtc", "-o", "rmsd.xvg", "-tu", "ps"],
                      "rmsd.xvg", stdin="Backbone\nBackbone\n", kind="timeseries",
                      help="How far the structure drifts from the crystal/NMR pose."),
             Analysis("gyrate", "Radius of gyration (compactness)",

@@ -76,9 +76,13 @@ def pdb_title(pdb_id: str) -> str | None:
         with urllib.request.urlopen(
                 f"https://files.rcsb.org/header/{pdb_id}.pdb", timeout=20) as r:
             head = r.read().decode("utf8", "replace")
-    except urllib.error.HTTPError:
-        cached.write_text("")          # 404 => the model invented an ID that does not exist
-        return ""
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            cached.write_text("")      # definitively not an entry: the model invented it
+            return ""
+        return None                    # 503/429/403 = "we could not check", NOT "it is fake".
+        #                                Caching "" here would permanently poison the disk
+        #                                cache and score a CORRECT model wrong forever after.
     except Exception:  # noqa: BLE001
         return None                    # offline: unknown, NOT a failure — never cache this
     txt = " ".join(l[10:].strip() for l in head.splitlines()
@@ -262,6 +266,7 @@ def _grade(plan, checks):
 def run_model(model, k=2, verbose=True):
     raw_s = raw_n = fin_s = fin_n = 0
     unc_s = unc_n = 0
+    ungradable_cases = 0
     lats, invalid = [], 0
     for req, checks, covered in CASES:
         for _ in range(k):
@@ -282,7 +287,14 @@ def run_model(model, k=2, verbose=True):
             c, d, fails = _grade(fin, checks)
             fin_s += c; fin_n += d
             if not covered:
-                unc_s += c; unc_n += d
+                # An uncovered case exists ONLY to measure the model-dependent check (the
+                # PDB id it must know). If that check was ungradable, the remaining checks
+                # are ones enforce() already made deterministically correct -- counting
+                # them would score EVERY model, even one hallucinating every id, at 1.00.
+                if any("UNGRADABLE" in f for f in fails):
+                    ungradable_cases += 1
+                else:
+                    unc_s += c; unc_n += d
             if fin:
                 v = validate(Plan.from_dict(fin))
                 if not v["ok"]:
@@ -300,7 +312,9 @@ def run_model(model, k=2, verbose=True):
         "model": model, "k": k,
         "raw_accuracy": round(p_raw, 3),
         "final_accuracy": round(p_fin, 3), "final_ci95": [round(lo, 3), round(hi, 3)],
-        "uncovered_accuracy": round(p_unc, 3), "uncovered_ci95": [round(ulo, 3), round(uhi, 3)],
+        "uncovered_accuracy": round(p_unc, 3) if unc_n else None,
+        "uncovered_ci95": [round(ulo, 3), round(uhi, 3)] if unc_n else None,
+        "uncovered_ungradable": ungradable_cases,
         "guardrail_gain": round(p_fin - p_raw, 3),
         "median_latency_s": round(med, 1),
         "invalid_plans": invalid,
@@ -334,8 +348,10 @@ def main(models, k=2):
             print(f"{r['model']:<22}  FAILED: {r['error'][:50]}")
             continue
         ci = r["final_ci95"]
+        unc = ("     —" if r.get("uncovered_accuracy") is None
+               else f"{r['uncovered_accuracy']:>6.2f}")
         print(f"{r['model']:<22}{r['raw_accuracy']:>7.2f}{r['final_accuracy']:>8.2f}"
-              f"{f'[{ci[0]:.2f},{ci[1]:.2f}]':>16}{r['uncovered_accuracy']:>12.2f}"
+              f"{f'[{ci[0]:.2f},{ci[1]:.2f}]':>16}{unc:>12}"
               f"{r['guardrail_gain']:>+7.2f}{r['median_latency_s']:>6.0f}s"
               f"{r['invalid_plans']:>5}")
     print("=" * 100)

@@ -95,6 +95,7 @@ class Job:
     started: str = None
     finished: str = None
     cores: int = 0
+    cpus: list = field(default_factory=list)   # the DISJOINT cpu slice this job holds
     mem_gb: int = 0
     error: str = None
 
@@ -236,10 +237,28 @@ class Scheduler:
                     if job.needs_gpu:
                         gpu_running += 1
 
+    def _free_cpus(self) -> list:
+        """CPUs in our cpuset that no running job already holds."""
+        try:
+            allowed = set(os.sched_getaffinity(0))
+        except AttributeError:                       # macOS / Windows
+            return []
+        for j in self.jobs.values():
+            if j.state == "running" and getattr(j, "cpus", None):
+                allowed -= set(j.cpus)
+        return sorted(allowed)
+
     def _launch(self, job):
         cores = max(1, min(self.budget.cores_per_job, TOTAL_CORES - 2))
         mem = self.budget.mem_per_job_gb
         job.cores, job.mem_gb = cores, mem
+        # Hand this job a DISJOINT slice of CPUs. _pin() used to compute
+        # sorted(sched_getaffinity(0))[:cores] independently in every child, so every
+        # concurrent job landed on the SAME first `cores` CPUs while the rest of the
+        # allocation sat idle. That is the path an HPC compute node actually takes,
+        # because compute nodes normally have no user systemd manager.
+        free = self._free_cpus()
+        job.cpus = free[:cores] if len(free) >= cores else []
         pfile = JOBS_DIR / f"{job.id}.json"
         pfile.write_text(json.dumps(job.params))
         runjob = [VENV_PY, "-m", "labkit.runjob", job.id, job.key, str(pfile)]
@@ -273,11 +292,12 @@ class Scheduler:
                 # Pin to a subset of the CPUs we are ACTUALLY allowed to use.
                 # range(cores) assumes we own CPU 0..n — false inside a Slurm cpuset
                 # (EINVAL) and the call does not exist at all on macOS.
+                cpus = list(job.cpus)
+
                 def _pin():
                     try:
-                        allowed = sorted(os.sched_getaffinity(0))
-                        if allowed:
-                            os.sched_setaffinity(0, set(allowed[:cores]))
+                        if cpus:
+                            os.sched_setaffinity(0, set(cpus))
                     except (AttributeError, OSError):
                         pass                      # not fatal: just don't pin
 

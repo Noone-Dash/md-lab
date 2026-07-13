@@ -57,6 +57,7 @@ class Intent:
     forcefield: str = None
     box_padding_nm: float = None
     dt_ps: float = None
+    ambiguous: list = field(default_factory=list)   # things we REFUSE to guess at
     box_size_nm: float = None
     water_model: str = None
     uncovered: list = field(default_factory=list)   # phrases we did NOT understand
@@ -93,7 +94,9 @@ def extract(nl: str) -> Intent:
     it = Intent()
 
     # ---- temperature ----------------------------------------------------- #
-    if re.search(r"body temperature|physiological temperature|37\s*°?\s*c", t):
+    # \b37\b, NOT 37: unanchored, "137 C" contains "37 c" and was silently pinned to
+    # 310 K instead of 410.15 K -- a 100 K thermostat error that verify() called clean.
+    if re.search(r"body temperature|physiological temperature|\b37\s*°?\s*c\b", t):
         it.temperature_K = 310.0
     elif re.search(r"room temperature|ambient", t):
         it.temperature_K = 300.0
@@ -101,7 +104,7 @@ def extract(nl: str) -> Intent:
     if m:
         it.temperature_K = float(m.group(1))
     m = re.search(r"(\d{1,3})\s*°?\s*c\b", t)
-    if m and not re.search(r"37\s*°?\s*c", t):
+    if m and not re.search(r"\b37\s*°?\s*c\b", t):
         it.temperature_K = float(m.group(1)) + 273.15
 
     # ---- salt ------------------------------------------------------------- #
@@ -121,16 +124,43 @@ def extract(nl: str) -> Intent:
         it.ensemble = "NVT"
 
     # ---- duration (production) -------------------------------------------- #
-    m = re.search(r"(\d+(?:\.\d+)?)\s*(ns|nanosecond)", t)
-    if m:
-        it.production_ns = float(m.group(1))
-    else:
-        m = re.search(r"(\d+(?:\.\d+)?)\s*(ps|picosecond)", t)
-        if m:
-            it.production_ns = float(m.group(1)) / 1000.0
+    # This took the FIRST duration in the string. "equilibrate for 1 ns, then run 20 ns
+    # of production" pinned production=1 ns -- a 20x error, reported as no violation.
+    # Now: prefer a duration that is ADJACENT to the word production; fall back to the
+    # sole duration if there is only one; otherwise pin NOTHING. A wrong pin is worse
+    # than no pin, because verify() cannot see through it.
+    durs = [(mm.start(), mm.end(),
+             float(mm.group(1)) * (1.0 if mm.group(2).startswith(("ns", "nano")) else 0.001))
+            for mm in re.finditer(r"(\d+(?:\.\d+)?)\s*(ns\b|nanosecond|ps\b|picosecond)", t)]
+    if len(durs) == 1:
+        it.production_ns = durs[0][2]
+    elif len(durs) > 1:
+        # Drop any duration that is the EQUILIBRATION time. The word can sit on EITHER
+        # side of the number: "equilibrate for 1 ns" and "100 ps of equilibration".
+        def _is_equil(a, b):
+            # The connective must be a PREPOSITION that introduces the duration
+            # ("equilibrate FOR 1 ns"). Allowing any two words let "equilibration THEN
+            # 5 ns" swallow the production time as if it were the equilibration time.
+            return bool(re.search(r"equilibrat\w*\s*(?:for|of|with|:)?\s*$", t[:a])
+                        or re.match(r"\s*(?:of\s+|for\s+)?equilibrat", t[b:]))
+        cand = [(pos, v) for pos, end, v in durs if not _is_equil(pos, end)]
+        prod_at = [mm.start() for mm in re.finditer(r"produc|\brun\b|\bsimulat", t)]
+        if len(cand) == 1:
+            it.production_ns = cand[0][1]
+        elif cand and prod_at:
+            # nearest to the word "production" wins, and only if it wins CLEARLY
+            scored = sorted((min(abs(pos - q) for q in prod_at), v) for pos, v in cand)
+            if len(scored) == 1 or (scored[0][0] < 30 and scored[0][0] * 2 < scored[1][0]):
+                it.production_ns = scored[0][1]
+        if it.production_ns is None:
+            it.ambiguous.append(
+                f"{len(durs)} durations, none unambiguously the production time")
 
     # ---- equilibration protocol ------------------------------------------- #
-    if re.search(r"proper equilibration|equilibrat\w*|full protocol|production run", t):
+    if re.search(r"\b(no|without|skip|skipping|omit|don'?t)\s+(the\s+)?equilibrat\w*|"
+                 r"\bunequilibrated\b", t):
+        it.equilibrate = False        # an explicit REFUSAL. It used to switch it on.
+    elif re.search(r"proper equilibration|equilibrat\w*|full protocol|production run", t):
         it.equilibrate = True
 
     # ---- force field ------------------------------------------------------- #
@@ -171,16 +201,28 @@ def extract(nl: str) -> Intent:
         it.box_size_nm = float(m.group(1))
 
     # ---- water model -------------------------------------------------------- #
-    for wm, pat in (("spce", r"spc/?e"), ("tip3p", r"tip3p"), ("tip4p", r"tip4p"),
+    # MOST SPECIFIC FIRST. r"tip4p" matched inside "tip4p-ew" and pinned plain TIP4P --
+    # a different water model, with different charges, pinned so nothing downstream fixed it.
+    for wm, pat in (("tip4pew", r"tip4p\s*[-/ ]?\s*ew"), ("spce", r"spc\s*/?\s*e\b"),
+                    ("tip3p", r"tip3p"), ("tip4p", r"tip4p"),
                     ("tip5p", r"tip5p"), ("spc", r"\bspc\b")):
         if re.search(pat, t):
             it.water_model = wm
             break
 
     # ---- what molecule ---------------------------------------------------- #
-    m = re.search(r"\b([0-9][a-z0-9]{3})\b", t)          # an explicit PDB id
-    if m:
-        it.pdb_id = m.group(1).upper()
+    # A PDB id is [0-9][A-Za-z0-9]{3} -- but so is "10ns", "20ps", "310k". This regex
+    # fabricated pdb_id="10NS" from "simulate lysozyme for 10ns", which 404s at RCSB,
+    # AND it ran before the name lookup, so it destroyed the correct id (1AKI) too.
+    UNIT = re.compile(r"^\d+(?:ns|ps|fs|nm|k|m|c|s|g|l)$")
+    pdb = None
+    for mm in re.finditer(r"\b([0-9][a-z0-9]{3})\b", t):
+        tok = mm.group(1)
+        if not UNIT.match(tok):
+            pdb = tok.upper()
+            break
+    if pdb:
+        it.pdb_id = pdb
         it.kind = "protein"
     else:
         for name in sorted(KNOWN_PDB, key=len, reverse=True):
@@ -244,6 +286,12 @@ def verify(plan: dict, it: Intent) -> list:
                 if got is None or abs(float(got) - it.dt_ps) > 1e-6:
                     v.append(f"dt: asked for {it.dt_ps} ps, plan says {got}")
                 break
+    if it.ensemble:                        # there was NO ensemble check at all
+        dyn = [st for st in stages if st.get("type") == "dynamics"]
+        if dyn:
+            got = (dyn[-1].get("params") or {}).get("ensemble")
+            if got != it.ensemble:
+                v.append(f"ensemble: asked for {it.ensemble}, production stage says {got}")
     return v
 
 
@@ -269,16 +317,16 @@ def enforce(plan: dict, it: Intent) -> dict:
         s["box_size_nm"] = it.box_size_nm
     if it.water_model:
         s["water_model"] = it.water_model
-    if it.dt_ps is not None:
-        for st in plan.get("stages") or []:
-            if st.get("type") == "dynamics":
-                st.setdefault("params", {})["dt"] = it.dt_ps
-
     # protocol: if the user asked for equilibration, the SHAPE is a deterministic
     # template, not something the model improvises.
     if it.equilibrate and it.kind == "protein":
         T = it.temperature_K or 300.0
         prod = it.production_ns if it.production_ns is not None else 0.1
+        # The user's ensemble applies to PRODUCTION. The equilibration stages are NVT
+        # then NPT by construction (you relax the box before you sample from it), but an
+        # explicit "NVT production" used to be silently overwritten with NPT here, and
+        # verify() had no ensemble check to catch it.
+        prod_ens = it.ensemble or "NPT"
         p["stages"] = [
             {"name": "minimize", "type": "minimize", "max_steps": 5000, "sim_time_ns": 0.0,
              "posres_fc_kj": 0.0, "params": {"ensemble": "NVT", "temperature": T}},
@@ -287,7 +335,7 @@ def enforce(plan: dict, it: Intent) -> dict:
             {"name": "npt", "type": "dynamics", "sim_time_ns": 0.05, "posres_fc_kj": 1000.0,
              "params": {"ensemble": "NPT", "temperature": T}},
             {"name": "production", "type": "dynamics", "sim_time_ns": prod,
-             "posres_fc_kj": 0.0, "params": {"ensemble": "NPT", "temperature": T}},
+             "posres_fc_kj": 0.0, "params": {"ensemble": prod_ens, "temperature": T}},
         ]
         p["analyses"] = ["rmsd", "gyrate", "rmsf"]
     else:
@@ -315,4 +363,13 @@ def enforce(plan: dict, it: Intent) -> dict:
     s2, prov = complete_system(p["system"], rcoulomb_nm=1.0, pinned=pinned)
     p["system"] = s2
     p["_provenance"] = prov
+    # dt is pinned LAST and on `p` -- the dict we actually return.
+    # It used to be written into `plan` (the caller's input) BEFORE the template block,
+    # so it mutated a dict nobody reads and was then wiped by the template anyway. The
+    # returned plan kept the MODEL's timestep: an unpinned physical field, silently.
+    if it.dt_ps is not None:
+        for st in p.get("stages") or []:
+            if st.get("type") == "dynamics":
+                st.setdefault("params", {})["dt"] = it.dt_ps
+
     return p

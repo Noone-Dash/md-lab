@@ -42,12 +42,25 @@ def uncertainty(manifest, spec: dict) -> dict | None:
         return None
     frac = spec.get("last_frac", 0.5 if spec["type"] == "energy_mean" else 0.25)
     k = max(1, int(len(y) * frac))
+
+    # dt must be in PICOSECONDS. Do not assume the axis is: gmx rms was writing its
+    # x-axis with -tu ns while every energy term is in ps, so the inferred dt (and
+    # tau_int_ps with it) came out 1000x too small. Read the unit off the axis label.
     dt = (x[1] - x[0]) if x and len(x) > 1 else None
+    if dt is not None:
+        unit = ""
+        for a in manifest.get("analyses", []) or []:
+            if a.get("name") == spec.get("name"):
+                unit = str((a.get("data") or {}).get("xaxis", "")).lower()
+        if "ns" in unit or "nanosecond" in unit:
+            dt *= 1000.0
+
     from ..uncertainty import stats
-    s = stats(y[-k:], dt_ps=dt)
-    return {kk: s[kk] for kk in
-            ("mean", "sem", "sem_naive", "inflation", "tau_int", "tau_int_ps",
-             "n", "n_eff", "ci95", "sd", "estimators_agree") if kk in s}
+    st = stats(y[-k:], dt_ps=dt)
+    keep = ("mean", "sem", "sem_naive", "sem_sokal", "sem_blocking", "inflation",
+            "tau_int", "tau_int_ps", "n", "n_eff", "sd", "resolvable",
+            "blocking_levels", "ci95", "note")
+    return {kk: st[kk] for kk in keep if kk in st}
 
 
 def analysis_final(manifest, name, last_frac=0.25, **_):
