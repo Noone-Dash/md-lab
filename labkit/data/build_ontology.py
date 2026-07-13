@@ -158,7 +158,7 @@ def system_area():
 
 
 def main():
-    workflow = json.loads(Path("/tmp/onto_raw.json").read_text())
+    workflow = json.loads((HERE / "ontology_source.json").read_text())
     for p in workflow:
         p.setdefault("stage_scope", "stage")
     onto = workflow + system_area()

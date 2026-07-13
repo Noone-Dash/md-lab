@@ -20,7 +20,10 @@ from labkit.tracks import TRACKS, get_track    # noqa: E402
 def main():
     run_id, key, pfile = sys.argv[1], sys.argv[2], sys.argv[3]
     params = json.loads(Path(pfile).read_text())
-    if key == "__plan__":
+    if key == "__backfill__":
+        from labkit.backfill import run_campaign
+        run_campaign(params["plan"], run_id, float(params["target_ns"]))
+    elif key == "__plan__":
         from labkit.plan.schema import Plan
         from labkit.engine import run_plan
         run_plan(Plan.from_dict(params["plan"]), run_id=run_id)

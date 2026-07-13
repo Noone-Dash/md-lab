@@ -85,7 +85,9 @@ class Job:
     track: str
     needs_gpu: bool
     params: dict
-    state: str = "queued"           # queued|running|paused|done|error|killed
+    klass: str = "interactive"      # interactive | backfill
+    target_ns: float = 0.0
+    state: str = "queued"           # queued|running|paused|preempted|done|error|killed
     unit: str = None
     pid: int = None
     submitted: str = ""
@@ -157,14 +159,69 @@ class Scheduler:
         self._schedule()
         return rid
 
+    def submit_backfill(self, plan_dict, target_ns: float):
+        """A long campaign that runs only on idle GPU and yields to interactive work."""
+        import json as _json
+        from datetime import datetime as _dt
+        with self.lock:
+            rid = _dt.now().strftime("%Y%m%d_%H%M%S_%f") + "_backfill"
+        job = Job(id=rid, key="__backfill__", name=plan_dict.get("name", "campaign"),
+                  track="plan", needs_gpu=True,
+                  params={"plan": plan_dict, "target_ns": target_ns},
+                  klass="backfill", target_ns=target_ns, submitted=_now())
+        with self.lock:
+            self.jobs[rid] = job
+        d = RUNS_DIR / rid; d.mkdir(parents=True, exist_ok=True)
+        (d / "run.json").write_text(_json.dumps({
+            "id": rid, "recipe": "backfill", "recipe_name": job.name,
+            "category": "Biomolecular", "track": "plan", "engine": "GROMACS 2026.2",
+            "mode": "live", "klass": "backfill", "target_ns": target_ns,
+            "params": {"target_ns": target_ns}, "status": "queued", "created": _now(),
+            "steps": [], "error": None, "outputs": {}, "energy": None, "analyses": [],
+            "done_ns": 0.0, "progress_pct": 0.0,
+        }, indent=2))
+        self._schedule()
+        return rid
+
+    def _preempt_backfill(self):
+        """SIGTERM a running backfill: mdrun checkpoints at the next NS step and exits.
+        The job returns to the queue and resumes later from the checkpoint (exactly)."""
+        for j in self.jobs.values():
+            if j.klass == "backfill" and j.state in ("running", "paused"):
+                self._signal(j, "SIGCONT")          # in case it was paused
+                self._signal(j, "SIGTERM")          # -> mdrun writes the checkpoint
+                j.state = "preempted"
+                j.finished = None
+                return True
+        return False
+
     # -- scheduling --------------------------------------------------------- #
     def _schedule(self):
         with self.lock:
             running = [j for j in self.jobs.values() if j.state in ("running", "paused")]
+            # ---- adaptive policy -------------------------------------------------
+            # Interactive work always wins the GPU. If any interactive job wants to run
+            # and a backfill campaign holds the GPU, preempt the campaign (it checkpoints).
+            want_interactive = any(j.klass == "interactive" and j.state == "queued"
+                                   for j in self.jobs.values())
+            bf_running = any(j.klass == "backfill" and j.state == "running"
+                             for j in self.jobs.values())
+            if want_interactive and bf_running:
+                self._preempt_backfill()
+                running = [j for j in self.jobs.values() if j.state in ("running", "paused")]
+
+            interactive_busy = any(j.klass == "interactive" and j.state in ("running", "paused", "queued")
+                                   for j in self.jobs.values())
+
             gpu_running = sum(1 for j in running if j.needs_gpu)
             free = self.budget.max_concurrent - len(running)
-            for job in sorted((j for j in self.jobs.values() if j.state == "queued"),
-                              key=lambda j: j.submitted):
+            # interactive first, then (only if the GPU is otherwise idle) backfill
+            candidates = sorted(
+                (j for j in self.jobs.values() if j.state in ("queued", "preempted")),
+                key=lambda j: (0 if j.klass == "interactive" else 1, j.submitted))
+            for job in candidates:
+                if job.klass == "backfill" and interactive_busy:
+                    continue        # the GPU is wanted; campaigns wait
                 if free <= 0:
                     break
                 if job.needs_gpu and gpu_running >= self.budget.max_gpu_jobs:
@@ -240,6 +297,12 @@ class Scheduler:
                 if self._alive(job):
                     continue
                 st = self._manifest_status(job.id)
+                if job.klass == "backfill" and st in ("preempted", "running"):
+                    # yielded the GPU (or was cut short) — go back in the queue and
+                    # resume from the checkpoint next time the GPU is free
+                    job.state = "queued"
+                    self._reset_unit(job)
+                    continue
                 job.state = "error" if st == "error" else "done"
                 if job.state == "error":
                     job.error = job.error or self._manifest_error(job.id)
