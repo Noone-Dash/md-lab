@@ -48,6 +48,14 @@ Conventions you must apply:
                                then NPT (posres_fc_kj 1000), then unrestrained production
   a plain water/solvent box -> system.kind "solvent"
   a named protein/PDB id    -> system.kind "protein", structure_source "rcsb"
+
+For ANY protein, ALWAYS set system.protein_name to the protein's common scientific name
+("lysozyme", "alpha-amylase", "HIV-1 protease", "haemoglobin"). If the user described it
+instead of naming it ("the enzyme that digests starch", "the protein that carries oxygen"),
+put the NAME you infer there. THAT is the job we want from you.
+Do NOT try to recall a PDB id from memory -- the lab looks the id up in the PDB itself and
+verifies it against the entry's title. Set pdb_id ONLY if the user gave an explicit 4-char
+id in the request.
   protein analyses          -> ["rmsd","gyrate","rmsf"]   water -> ["rdf_ow","msd_ow"]
 Durations are in sim_time_ns (20 ps = 0.02).
 """

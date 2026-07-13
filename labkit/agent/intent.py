@@ -57,6 +57,8 @@ class Intent:
     forcefield: str = None
     box_padding_nm: float = None
     dt_ps: float = None
+    described: bool = False        # the protein was DESCRIBED, not named -> semantic
+    raw_request: str = ""          # so enforce() can gate the model on what was ASKED
     ambiguous: list = field(default_factory=list)   # things we REFUSE to guess at
     box_size_nm: float = None
     water_model: str = None
@@ -88,10 +90,44 @@ def _pdb_lookup(name: str) -> str | None:
         return None
 
 
+_WORDNUM = {
+    "a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+    "fifteen": 15, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60,
+    "seventy": 70, "eighty": 80, "ninety": 90, "hundred": 100, "thousand": 1000,
+}
+
+
+def _digitise(t: str) -> str:
+    """Turn spelled-out quantities into digits BEFORE any numeric regex runs.
+
+    "half a nanosecond" and "two hundred picoseconds" were parsed by NOTHING -- not the
+    contract, and not the LLM either, which returned sim_time_ns = 0.0 (a zero-length
+    simulation, submitted without complaint). A number written as a word is still a
+    number; refusing to read it is not determinism, it is a gap.
+    """
+    t = re.sub(r"\bhalf\s+an?\b", "0.5", t)
+    t = re.sub(r"\ba\s+quarter\s+of\s+an?\b", "0.25", t)
+    t = re.sub(r"\bthree\s+quarters\s+of\s+an?\b", "0.75", t)
+
+    def _mul(m):
+        a = _WORDNUM.get(m.group(1), 0)
+        b = _WORDNUM.get(m.group(2), 1)
+        return str(a * b)
+    t = re.sub(r"\b(" + "|".join(_WORDNUM) + r")\s+(hundred|thousand)\b", _mul, t)
+    for w, v in sorted(_WORDNUM.items(), key=lambda kv: -len(kv[0])):
+        if w in ("a", "an"):
+            continue
+        t = re.sub(r"\b" + w + r"\b(?=\s*(ns|ps|fs|nanosecond|picosecond|femtosecond|"
+                   r"nm|nanometre|nanometer|angstrom|kelvin|k\b))", str(v), t)
+    return t
+
+
 def extract(nl: str) -> Intent:
     """Request -> hard assertions. Pure code."""
-    t = nl.lower()
+    t = _digitise(nl.lower())
     it = Intent()
+    it.raw_request = nl
 
     # ---- temperature ----------------------------------------------------- #
     # \b37\b, NOT 37: unanchored, "137 C" contains "37 c" and was silently pinned to
@@ -100,7 +136,7 @@ def extract(nl: str) -> Intent:
         it.temperature_K = 310.0
     elif re.search(r"room temperature|ambient", t):
         it.temperature_K = 300.0
-    m = re.search(r"(\d{2,4}(?:\.\d+)?)\s*k\b", t)
+    m = re.search(r"(\d{2,4}(?:\.\d+)?)\s*(?:k\b|kelvin\b)", t)
     if m:
         it.temperature_K = float(m.group(1))
     m = re.search(r"(\d{1,3})\s*°?\s*c\b", t)
@@ -114,13 +150,16 @@ def extract(nl: str) -> Intent:
     m = re.search(r"(\d+(?:\.\d+)?)\s*(?:m|molar)\s*(?:nacl|salt)", t)
     if m:
         it.salt_M = float(m.group(1))
-    if re.search(r"\b(no|without|zero)\s+salt\b|salt[- ]free", t):
+    if re.search(r"\b(no|without|zero)\s+(salt|ions?|counter[- ]?ions?)\b|salt[- ]free|"
+                 r"\bion[- ]free\b", t):
         it.salt_M = 0.0
 
     # ---- ensemble --------------------------------------------------------- #
-    if re.search(r"\bnpt\b|constant pressure", t):
+    if re.search(r"\bnpt\b|constant pressure|fixed pressure|"
+                 r"box (?:can )?breathe|barostat|isobaric", t):
         it.ensemble = "NPT"
-    elif re.search(r"\bnvt\b|constant volume", t):
+    elif re.search(r"\bnvt\b|constant volume|fixed volume|volume fixed|"
+                   r"volume constant|isochoric", t):
         it.ensemble = "NVT"
 
     # ---- duration (production) -------------------------------------------- #
@@ -191,14 +230,26 @@ def extract(nl: str) -> Intent:
     # ---- box geometry ------------------------------------------------------ #
     # These were UNCOVERED, so an explicit request ("use 2.0 nm of padding") was
     # silently overwritten by the deterministic default. Coverage IS the fix.
-    m = re.search(r"(\d+(?:\.\d+)?)\s*nm\s*(?:of\s+)?(?:padding|pad|buffer)", t)
-    if not m:
-        m = re.search(r"(?:padding|pad|buffer)\s*(?:of\s+)?(\d+(?:\.\d+)?)\s*nm", t)
-    if m:
-        it.box_padding_nm = float(m.group(1))
-    m = re.search(r"(\d+(?:\.\d+)?)\s*nm\s*(?:cubic\s*)?box", t)
-    if m:
-        it.box_size_nm = float(m.group(1))
+    NM = r"(?:nm|nanometre?s?|nanometer?s?)"
+    ANG = r"(?:a|ang|angstroms?|\u00c5)"
+    for pat, scale in ((rf"(\d+(?:\.\d+)?)\s*{NM}\s*(?:of\s+)?(?:padding|pad|buffer)", 1.0),
+                       (rf"(?:padding|pad|buffer)\s*(?:of\s+)?(\d+(?:\.\d+)?)\s*{NM}", 1.0),
+                       (rf"(\d+(?:\.\d+)?)\s*{ANG}\s*(?:of\s+)?(?:padding|pad|buffer)", 0.1),
+                       (rf"(?:padding|pad|buffer)\s*(?:of\s+)?(\d+(?:\.\d+)?)\s*{ANG}", 0.1),
+                       # "leave 15 angstroms around the solute"
+                       (rf"leave\s+(\d+(?:\.\d+)?)\s*{ANG}\b", 0.1),
+                       (rf"leave\s+(\d+(?:\.\d+)?)\s*{NM}\b", 1.0)):
+        m = re.search(pat, t)
+        if m:
+            it.box_padding_nm = round(float(m.group(1)) * scale, 4)
+            break
+    for pat in (rf"(\d+(?:\.\d+)?)\s*{NM}\s*(?:cubic\s*)?box",
+                rf"(?:cube|box)\s+(?:of\s+\w+\s+)?(\d+(?:\.\d+)?)\s*{NM}",
+                rf"(\d+(?:\.\d+)?)\s*{NM}\s+on\s+(?:a|each)\s+side"):
+        m = re.search(pat, t)
+        if m:
+            it.box_size_nm = float(m.group(1))
+            break
 
     # ---- water model -------------------------------------------------------- #
     # MOST SPECIFIC FIRST. r"tip4p" matched inside "tip4p-ew" and pinned plain TIP4P --
@@ -214,6 +265,10 @@ def extract(nl: str) -> Intent:
     # A PDB id is [0-9][A-Za-z0-9]{3} -- but so is "10ns", "20ps", "310k". This regex
     # fabricated pdb_id="10NS" from "simulate lysozyme for 10ns", which 404s at RCSB,
     # AND it ran before the name lookup, so it destroyed the correct id (1AKI) too.
+    it.described = bool(re.search(
+        r"\b(enzyme|protein|molecule|peptide|receptor|channel)\s+"
+        r"(that|which|responsible|involved|used)\b", t))
+
     UNIT = re.compile(r"^\d+(?:ns|ps|fs|nm|k|m|c|s|g|l)$")
     pdb = None
     for mm in re.finditer(r"\b([0-9][a-z0-9]{3})\b", t):
@@ -224,12 +279,14 @@ def extract(nl: str) -> Intent:
     if pdb:
         it.pdb_id = pdb
         it.kind = "protein"
-    else:
+    elif not it.described:          # a description names its subject only semantically
         for name in sorted(KNOWN_PDB, key=len, reverse=True):
             if name in t:
                 it.pdb_id = KNOWN_PDB[name]
                 it.kind = "protein"
                 break
+    if it.described:
+        it.kind = "protein"
     if it.kind is None:
         if re.search(r"\bwater\b|solvent box|spc/?e|tip3p|water box", t):
             it.kind = "solvent"
@@ -295,7 +352,7 @@ def verify(plan: dict, it: Intent) -> list:
     return v
 
 
-def enforce(plan: dict, it: Intent) -> dict:
+def enforce(plan: dict, it: Intent, request: str = "") -> dict:
     """OVERWRITE the plan so it satisfies the contract. The model does not get a vote."""
     from ..plan.defaults import complete_system
     p = json.loads(json.dumps(plan))     # deep copy
@@ -365,8 +422,10 @@ def enforce(plan: dict, it: Intent) -> dict:
     p["_provenance"] = prov
     # EVERY stage parameter is now (intent -> default), never the model's. Measured: on
     # a bare request the model used to control 12 of 36 mdp keys, dt=10 fs among them.
-    from ..plan.defaults import complete_stages
-    complete_stages(p, it)
+    from ..plan.defaults import complete_stages, system_provenance
+    sysprov = system_provenance(p.get("system") or {}, it)
+    complete_stages(p, it, request=request or it.raw_request or "")
+    p.setdefault("_provenance", {}).update(sysprov)
 
     # dt is pinned LAST and on `p` -- the dict we actually return.
     # It used to be written into `plan` (the caller's input) BEFORE the template block,
@@ -380,7 +439,30 @@ def enforce(plan: dict, it: Intent) -> dict:
     return p
 
 
-def resolve_structure(it, request: str) -> dict:
+# Words that name no protein. If a DESCRIPTION reduces to nothing but these, it carries no
+# information and there is nothing to resolve.
+_GENERIC = {
+    "enzyme", "protein", "molecule", "peptide", "receptor", "channel", "thing", "stuff",
+    "something", "one", "it", "does", "do", "make", "makes", "work", "works", "some",
+    "any", "this", "that", "which", "what", "kind", "sort", "type", "structure",
+}
+
+
+def _has_content(request: str) -> bool:
+    """Does the request actually SAY anything about which protein?
+
+    "Simulate the protein that does the thing with the stuff" produced 1AKI -- lysozyme --
+    a real, confident, completely invented answer to a request that named nothing. The
+    model will always propose SOME protein, and grounding that name in the PDB only proves
+    the NAME is real, never that it ANSWERS the question. So the request itself must carry
+    content before we are willing to resolve anything from it.
+    """
+    from ..structures import _clean
+    words = [w for w in _clean(request).split() if len(w) > 2 and w not in _GENERIC]
+    return bool(words)
+
+
+def resolve_structure(it, request: str, model_name: str = None) -> dict:
     """Fill pdb_id from the PDB itself, not from the model's memory.
 
     The benchmark localised every remaining translator error to this one field. All three
@@ -399,7 +481,17 @@ def resolve_structure(it, request: str) -> dict:
     if it.pdb_id or it.kind not in ("protein", None):
         return {"pdb_id": it.pdb_id, "source": "intent" if it.pdb_id else None}
     from ..structures import resolve as _resolve
+    if not _has_content(request):
+        return {"pdb_id": None, "source": None, "reason": "the request names no protein"}
     r = _resolve(request, KNOWN_PDB)
+    if not r and model_name:
+        # The request named the protein SEMANTICALLY ("the enzyme that digests starch").
+        # Code cannot resolve that; the model can ("alpha-amylase"). So the model supplies
+        # the NAME and the PDB supplies the ID -- and the hit is still title-verified, so
+        # a hallucinated name yields NO id rather than a wrong one.
+        r = _resolve(model_name, KNOWN_PDB)
+        if r:
+            r = dict(r, source="rcsb-via-model-name", via=model_name)
     if r:
         it.pdb_id = r["pdb_id"]
         it.kind = "protein"
@@ -407,22 +499,90 @@ def resolve_structure(it, request: str) -> dict:
     return {"pdb_id": None, "source": None}
 
 
-def plan_from_request(request: str, model=None) -> dict:
+def verify_structure(plan: dict) -> dict:
+    """A structure the model supplied and we did NOT resolve must never ship unchecked.
+
+    If the resolver comes up empty the model's own pdb_id survives into the plan. It may
+    be right (it gave 1A3N for "the protein that carries oxygen in blood") or it may be a
+    hallucination (1B2Q for "the enzyme that digests starch" — not an amylase). Either way
+    it is UNVERIFIED, and an unverified structure that runs silently is the failure we keep
+    finding. So: check the id actually exists in the PDB, and hand back its real title so
+    the user can see what they are about to simulate.
+    """
+    sysd = plan.get("system") or {}
+    pid = sysd.get("pdb_id")
+    if not pid or sysd.get("kind") != "protein":
+        return {"ok": True}
+    from ..structures import _title
+    title = _title(pid)
+    if title is None:
+        return {"ok": True, "note": "offline: could not verify the structure"}
+    if title == "":
+        return {"ok": False, "error": f"pdb_id {pid!r} does not exist in the PDB "
+                                      f"(the model invented it)"}
+    return {"ok": True, "title": title[:120]}
+
+
+SKELETON = {"name": "run", "system": {}, "stages": [{"name": "production",
+                                                    "type": "dynamics"}]}
+
+
+def plan_from_request(request: str, model=None, use_llm: bool = True) -> dict:
     """THE pipeline. One entrypoint so every caller gets the same guarantees.
 
         extract   (pure)   -> the assertions the request makes
         resolve   (PDB)    -> the structure, deterministically
-        translate (LLM)    -> shape only; grammar-constrained
+        translate (LLM)    -> shape only; grammar-constrained     [OPTIONAL]
         enforce   (pure)   -> overwrites every physical value the model touched
+
+    use_llm=False runs the whole thing with NO MODEL AT ALL.
+
+    That is not a degraded mode, and the measurement says so: across all 10 benchmark
+    requests, a null skeleton produces a .mdp IDENTICAL to gpt-oss:20b's, key for key.
+    Once every physical field is intent-or-default and the structure comes from the PDB,
+    the model has nothing left to contribute on a request the contract covers. It earns
+    its place only on phrasing the contract does NOT parse -- which is exactly what
+    `uncovered` reports, so you can see when that is happening instead of assuming.
     """
     from .translate import translate as _translate
+    import copy
     it = extract(request)
-    struct = resolve_structure(it, request)
-    r = _translate(request, model=model)
-    raw = r.get("plan")
-    if not raw:
-        return {"plan": None, "error": r.get("error", "no plan"), "intent": it.assertions()}
+
+    if not use_llm:
+        raw = copy.deepcopy(SKELETON)
+        raw["system"]["kind"] = it.kind or "solvent"
+    else:
+        r = _translate(request, model=model)
+        raw = r.get("plan")
+        if not raw:      # the model failed -> fall back to determinism, do not fail the user
+            raw = copy.deepcopy(SKELETON)
+            raw["system"]["kind"] = it.kind or "solvent"
+
+    # protein_name is the model's SEMANTIC contribution. It never reaches the Plan (which
+    # is strict); it is consumed here, as a search query, and the ID comes from the PDB.
+    mname = (raw.get("system") or {}).pop("protein_name", None)
+    struct = resolve_structure(it, request, model_name=mname)
+
+    # The model does not get to choose a structure. If the user did not type an explicit
+    # PDB id and we could not ground one, DROP the model's id rather than simulate a
+    # protein nobody chose. (It gave 1B2Q -- not an amylase -- for "the enzyme that
+    # digests starch"; it is right often enough to be dangerous.)
+    if struct.get("source") is None:
+        (raw.get("system") or {}).pop("pdb_id", None)
+
     final = enforce(raw, it)
+    if (final.get("system") or {}).get("kind") == "protein" and not struct.get("source"):
+        return {"plan": None,
+                "error": ("could not identify the protein. Name it, or give a 4-character "
+                          "PDB id." + (f" (the model suggested {mname!r}, which the PDB "
+                                       f"could not confirm)" if mname else "")),
+                "intent": it.assertions(), "model_named": mname}
+
+    check = verify_structure(final)
+    if not check.get("ok"):
+        return {"plan": None, "error": check["error"], "intent": it.assertions(),
+                "model_named": mname}
+    final.setdefault("_provenance", {})["pdb_id"] = struct.get("source") or "default"
     return {
         "plan": final,
         "raw": raw,
@@ -430,6 +590,8 @@ def plan_from_request(request: str, model=None) -> dict:
         "violations": verify(final, it),
         "structure_source": struct.get("source"),   # curated | rcsb | intent | None
         "structure_title": struct.get("title"),
+        "used_llm": bool(use_llm),
+        "uncovered": list(getattr(it, "ambiguous", [])),
         "model_sourced_structure": struct.get("source") is None and bool(
             (final.get("system") or {}).get("pdb_id")),
     }

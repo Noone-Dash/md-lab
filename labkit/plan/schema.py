@@ -46,6 +46,10 @@ class Plan:
     system: SystemSpec = field(default_factory=SystemSpec)
     stages: list = field(default_factory=list)
     analyses: list = field(default_factory=list)
+    # WHERE EACH PHYSICAL VALUE CAME FROM: intent | model | default | derived.
+    # Metadata, not physics -- it changes no mdp key. It exists so that "the LLM chose
+    # your temperature" can never be an invisible fact.
+    _provenance: dict = field(default_factory=dict)
     schema_version: str = SCHEMA_VERSION
 
     # ---- (de)serialisation ------------------------------------------------ #
@@ -87,4 +91,5 @@ class Plan:
             raise PlanError("a plan needs at least one stage")
 
         return Plan(name=d.get("name", "unnamed"), system=system, stages=stages,
-                    analyses=list(d.get("analyses", []) or []))
+                    analyses=list(d.get("analyses", []) or []),
+                    _provenance=dict(d.get("_provenance", {}) or {}))

@@ -72,6 +72,13 @@ def plan_schema() -> dict:
                     "neutralize": {"type": "boolean"},
                     "structure_source": {"type": "string", "enum": src},
                     "pdb_id": {"type": "string", "pattern": "^[0-9][A-Za-z0-9]{3}$"},
+                    # The model is ALLOWED to name the protein in plain words, and that is
+                    # the thing it is actually good at: "the enzyme that digests starch"
+                    # -> "alpha-amylase". Turning a NAME into a PDB ID is a lookup, and
+                    # the lookup is grounded against the PDB and verified against the
+                    # entry's own title. Asking the model for the ID directly invited it
+                    # to hallucinate one (1B2Q, which is not an amylase).
+                    "protein_name": {"type": "string", "maxLength": 80},
                 },
                 # same reasoning: make the model COMMIT to salt and structure,
                 # rather than omitting them and inheriting 0.0 / "".

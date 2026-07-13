@@ -45,6 +45,21 @@ def padding_for(rcoulomb_nm: float = 1.0) -> float:
     return round(float(rcoulomb_nm) + CUTOFF_MARGIN_NM, 2)
 
 
+def system_provenance(system: dict, intent=None) -> dict:
+    """Where each SYSTEM field came from. Stage params had provenance; these did not."""
+    prov = {}
+    for f, iattr in (("forcefield", "forcefield"), ("water_model", "water_model"),
+                     ("box_size_nm", "box_size_nm"), ("box_padding_nm", "box_padding_nm"),
+                     ("salt_conc_M", "salt_M"), ("pdb_id", "pdb_id")):
+        if getattr(intent, iattr, None) is not None:
+            prov[f] = "intent"
+        elif system.get(f) is not None:
+            prov[f] = "model"
+        else:
+            prov[f] = "default"
+    return prov
+
+
 def complete_system(system: dict, rcoulomb_nm: float = 1.0,
                     pinned: set = frozenset()) -> tuple[dict, dict]:
     """Fill the remaining system fields deterministically.
@@ -118,6 +133,37 @@ def complete_system(system: dict, rcoulomb_nm: float = 1.0,
 # The model's job is what it is actually good at: identifying the molecule and the
 # SHAPE of the protocol. Not numbers.
 # ---------------------------------------------------------------------------------
+# EVIDENCE GATES. The model may PARSE the request; it may not INVENT.
+#
+# Allowing the model to supply a preference whenever intent is silent let an adversarial
+# model set T=500 K, NVT and 9 ns for the request "Simulate lysozyme" -- which mentions no
+# temperature, no ensemble and no duration. Nothing was parsed there; it was fabricated,
+# and 10 of 36 mdp keys moved with it.
+#
+# The distinction is whether the sentence CONTAINS ANYTHING TO READ. "blood heat" has
+# something to read (and the model reads it correctly). "Simulate lysozyme" does not. So a
+# model-supplied value is accepted only when the request mentions the concept at all;
+# otherwise the deterministic default stands.
+import re as _re
+
+_EVIDENCE = {
+    "temperature": _re.compile(
+        r"\d|temperature|thermal|hot\b|cold|cool|warm|heat|boil|freez|melt|"
+        r"kelvin|celsius|centigrade|body|room|ambient|physiolog", _re.I),
+    "ensemble": _re.compile(
+        r"\bnpt\b|\bnvt\b|pressure|volume|barostat|thermostat|\bbar\b|breathe|"
+        r"isochoric|isobaric|constant|fixed|density", _re.I),
+    "sim_time_ns": _re.compile(
+        r"\d|nanosecond|picosecond|microsecond|femtosecond|\bns\b|\bps\b|\bus\b|"
+        r"long|brief|short|duration|length|quick", _re.I),
+}
+
+
+def has_evidence(field: str, request: str) -> bool:
+    rx = _EVIDENCE.get(field)
+    return True if rx is None else bool(rx.search(request or ""))
+
+
 DEFAULT_TEMPERATURE_K = 300.0
 DEFAULT_PRODUCTION_NS = 0.1
 DT_BY_REGIME = {"atomistic": 0.002, "martini": 0.02}      # ps
@@ -130,8 +176,35 @@ def default_ensemble(kind: str) -> str:
     return "NVT" if kind == "fluid" else "NPT"
 
 
-def complete_stages(plan: dict, intent=None) -> dict:
-    """Overwrite every stage parameter with intent-or-default. Discards the model's."""
+def complete_stages(plan: dict, intent=None, allow_model: bool = True,
+                    request: str = "") -> dict:
+    """Set every stage parameter from intent -> model -> default, and RECORD WHICH.
+
+    THE MISTAKE THIS CORRECTS. I first made enforcement unconditional: every stage param
+    was intent-or-default, model discarded. That killed the residual (good) and also
+    killed the model's ONLY legitimate job (bad). Measured on out-of-distribution
+    phrasings, the LLM correctly parses "blood heat" -> 310 K, "keep the volume fixed"
+    -> NVT, "15 angstroms of padding" -> 1.5 nm; unconditional enforcement threw all of
+    it away and substituted 300 K / NPT / 1.2 nm. The user's request was silently
+    dropped -- the same bug as the box-padding one, but systemic.
+
+    The distinction I had collapsed:
+
+      DERIVED PHYSICS   dt, constraints, cutoffs, thermostat/barostat algorithm, output
+                        rates. A pure function of the force field and the regime. Not a
+                        preference at all, and NEVER the model's -- it has no way to know
+                        and no business guessing. Unconditional.
+
+      USER PREFERENCE   temperature, ensemble, duration, box, salt, water model, force
+                        field. The user either said it or did not. Reading it out of the
+                        sentence is NATURAL-LANGUAGE PARSING -- which is the model's
+                        actual competence, and not physics at all.
+
+    So a preference resolves intent -> model -> default, and every one carries its
+    provenance so nothing is silent. A model-sourced value still has to survive the 26
+    physics rules; and because it is marked, the UI can show exactly which numbers the
+    LLM chose rather than implying the machine decided them.
+    """
     from .resolve import regime as _regime
 
     class _S:                                    # resolve.regime() wants an object
@@ -144,15 +217,39 @@ def complete_stages(plan: dict, intent=None) -> dict:
         reg = "atomistic"
     kind = sysd.get("kind", "protein")
 
-    T = getattr(intent, "temperature_K", None) or DEFAULT_TEMPERATURE_K
-    ens = getattr(intent, "ensemble", None) or default_ensemble(kind)
-    dt = getattr(intent, "dt_ps", None) or DT_BY_REGIME.get(reg, 0.002)
-
     dyn = [st for st in (plan.get("stages") or []) if st.get("type") == "dynamics"]
+    prov = {}
+
+    def _pick(field, from_intent, from_model, default, ok=lambda v: True):
+        """intent -> model (only if the request says SOMETHING) -> default."""
+        if from_intent is not None:
+            prov[field] = "intent"
+            return from_intent
+        if (allow_model and from_model is not None and ok(from_model)
+                and has_evidence(field, request)):
+            prov[field] = "model"            # the model PARSED it; still faces the validator
+            return from_model
+        prov[field] = "default"
+        return default
+
+    m_prod = dyn[-1].get("params", {}) if dyn else {}
+    T = _pick("temperature", getattr(intent, "temperature_K", None),
+              _num(m_prod.get("temperature")), DEFAULT_TEMPERATURE_K,
+              ok=lambda v: 1.0 <= v <= 1000.0)
+    ens = _pick("ensemble", getattr(intent, "ensemble", None),
+                m_prod.get("ensemble"), default_ensemble(kind),
+                ok=lambda v: v in ("NVT", "NPT"))
+
+    # DERIVED PHYSICS: unconditional. The model never sources these.
+    dt = getattr(intent, "dt_ps", None) or DT_BY_REGIME.get(reg, 0.002)
+    cons = CONSTRAINTS_BY_REGIME.get(reg, "h-bonds")
+    prov["dt"] = "intent" if getattr(intent, "dt_ps", None) else "derived"
+    prov["constraints"] = "derived"
+
     for st in plan.get("stages") or []:
         pr = st.setdefault("params", {})
         pr["temperature"] = T
-        pr["constraints"] = CONSTRAINTS_BY_REGIME.get(reg, "h-bonds")
+        pr["constraints"] = cons
         if st.get("type") == "dynamics":
             pr["dt"] = dt
             # Only the PRODUCTION stage takes the user's ensemble. Equilibration stages
@@ -167,7 +264,18 @@ def complete_stages(plan: dict, intent=None) -> dict:
             pr.pop("ensemble", None)
 
     if dyn:
-        prod_ns = getattr(intent, "production_ns", None)
-        if prod_ns is None and dyn[-1].get("sim_time_ns") is None:
-            dyn[-1]["sim_time_ns"] = DEFAULT_PRODUCTION_NS
+        ns = _pick("sim_time_ns", getattr(intent, "production_ns", None),
+                   _num(dyn[-1].get("sim_time_ns")), DEFAULT_PRODUCTION_NS,
+                   ok=lambda v: 0 < v <= 10000)
+        dyn[-1]["sim_time_ns"] = ns
+
+    plan.setdefault("_provenance", {}).update(prov)
     return plan
+
+
+def _num(v):
+    try:
+        f = float(v)
+        return f if f == f else None                 # reject NaN
+    except (TypeError, ValueError):
+        return None
