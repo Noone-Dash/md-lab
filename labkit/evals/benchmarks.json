@@ -205,6 +205,32 @@
     "max": 0.4
    },
    "reference": "<0.3 nm typical for ubiquitin"
+  },
+  {
+   "id": "ligand_export_is_sane",
+   "title": "A real drug molecule parameterises and runs",
+   "why": "Aspirin -> OpenFF Sage -> NAGL AM1-BCC charges -> packmol/TIP3P -> GROMACS. The density of the resulting box must land on TIP3P water's, which was measured INDEPENDENTLY through a completely different toolchain (gmx solvate, no OpenFF anywhere): 986.0 \u00b1 1.3 kg/m\u00b3. Wrong charges, wrong combination rules, or a shadowed [atomtypes] entry \u2014 the classic silent failures when two topologies meet \u2014 would not land here. This is the only check that the small-molecule path produces physics and not just files.",
+   "run": {
+    "kind": "track",
+    "key": "ligand_md",
+    "params": {
+     "molecule": "aspirin",
+     "n_waters": 800,
+     "box_nm": 3.0,
+     "ns": 0.5,
+     "temperature": 300
+    }
+   },
+   "metric": {
+    "type": "energy_mean",
+    "term": "Density"
+   },
+   "expect": {
+    "min": 975,
+    "max": 1000
+   },
+   "unit": "kg/m\u00b3",
+   "reference": "986.0 \u00b1 1.3 (TIP3P, measured here via plain GROMACS)"
   }
  ]
 }

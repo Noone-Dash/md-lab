@@ -12,7 +12,7 @@ window.V3D = (function () {
   let picked = [];                // atoms clicked, for distance measurement
   let showBox = false;
   const opts = { style: "auto", color: "auto", surface: "none", surfOpacity: 0.7,
-                 labels: "none", category: "", caption: "",
+                 labels: "none", category: "", caption: "", ligand: false,
                  hide: { water: false, ions: false, hydrogens: false } };
 
   const ELEM_COLORS = () => ($3Dmol.elementColors && $3Dmol.elementColors.defaultColors) || {};
@@ -59,7 +59,19 @@ window.V3D = (function () {
     $("#vcaption").style.display = opts.caption ? "" : "none";
 
     applyStyle();
-    viewer.zoomTo();
+    // Frame the LIGAND, not the whole box: zoomTo({}) on a solvated system centres on the
+    // water and the molecule is a dot in the middle of it.
+    try {
+      if (opts.ligand) {
+        viewer.zoomTo({ resn: "LIG" });
+        viewer.zoom(0.45);      // pull back: zoomTo() alone frames it so tight you are
+        //                         looking at three atoms, not a molecule. Leave room for
+        //                         the solvation shell — that is what makes it a SIMULATION
+        //                         and not a picture of a molecule.
+      } else {
+        viewer.zoomTo();
+      }
+    } catch (e) { viewer.zoomTo(); }
     viewer.render();
 
     const sl = $("#frame"); sl.max = Math.max(0, nframes - 1); sl.value = 0;
@@ -69,6 +81,7 @@ window.V3D = (function () {
 
   /* ---------- representation ---------- */
   function autoKind() {
+    if (opts.ligand) return "ballstick";     // you came here to look at the DRUG
     if (/Biomol/i.test(opts.category)) return "cartoon";
     if (/Quantum/i.test(opts.category)) return "ballstick";
     return "sphere";
@@ -106,6 +119,16 @@ window.V3D = (function () {
     if (!viewer) return;
     viewer.setStyle({}, {});                       // clear everything
     viewer.setStyle({}, styleSpec());              // then paint visible
+
+    // A drug in water is 33 atoms among 2100. Painted the same, the molecule you actually
+    // came to see is an invisible speck inside a hairball. So: the ligand gets ball-and-
+    // stick by element, and the water drops back to faint lines you can see THROUGH.
+    // (Turning water off entirely is one click away, but seeing the solvation shell IS
+    // the point of running the thing in water.)
+    if (opts.ligand && !opts.hide.water) {
+      viewer.setStyle({ resn: WATER }, { line: { opacity: 0.18, colorscheme: "cyanCarbon" } });
+      viewer.setStyle({ resn: "LIG" }, { stick: { radius: 0.18 }, sphere: { scale: 0.32 } });
+    }
     if (opts.hide.water) viewer.setStyle({ resn: WATER }, {});
     if (opts.hide.ions) viewer.setStyle({ resn: IONS }, {});
     if (opts.hide.hydrogens) viewer.setStyle({ elem: "H" }, {});

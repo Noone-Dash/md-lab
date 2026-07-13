@@ -25,6 +25,18 @@ def main() -> int:
     fatal = 0
     warn = 0
 
+    # ---- ligand parameterisation (isolated env; openff is conda-only) -------
+    def _ligand_check():
+        from . import ligand
+        if ligand.available():
+            _p(OK, "ligand params (OpenFF)", f"env: {ligand.LIGAND_ENV}")
+            return 0
+        _p(WARN, "ligand params (OpenFF)",
+           "small molecules / drug candidates CANNOT be simulated without this.")
+        print(f"         openff-toolkit is conda-only, so it lives in an isolated env:")
+        print(ligand.BUILD_CMD)
+        return 1
+
     # ---- python deps -------------------------------------------------------
     required = {"flask": "web UI", "numpy": "everything", "psutil": "scheduler telemetry"}
     optional = {"openmm": "OpenMM track", "pyscf": "QM/QM-MM track",
@@ -110,6 +122,8 @@ def main() -> int:
         _p(WARN, "Ollama", f"no models at {C.OLLAMA_HOST} — chat/NL disabled. "
                            f"The plan pipeline does NOT need a model.")
         warn += 1
+
+    warn += _ligand_check()
 
     print()
     if fatal:

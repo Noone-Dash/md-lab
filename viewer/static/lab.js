@@ -266,7 +266,8 @@ async function loadTrajectory(runId, m) {
 
     showLoading("Building the 3D scene…", 100, `${(data.length / 1048576).toFixed(1)} MB parsed`);
     await new Promise(res => setTimeout(res, 30));   // let the paint happen
-    V3D.load(data, { category: m.category || "", caption: captionFor(m.recipe) });
+    V3D.load(data, { category: m.category || "", caption: captionFor(m.recipe),
+                     ligand: !!m.ligand });
     hideLoading();
   } catch (e) {
     hideLoading();

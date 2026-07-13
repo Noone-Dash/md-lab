@@ -1,11 +1,12 @@
 """Non-GROMACS simulation tracks (each emits the standard run.json manifest)."""
 
 from .cell import CellRD
+from .ligand_md import LigandMD
 from .openmm_md import OpenMMImplicit
 from .qmmm import QMMM
 from .reaction import ReactionScan
 
-TRACKS = {t.key: t for t in [OpenMMImplicit(), QMMM(), ReactionScan(), CellRD()]}
+TRACKS = {t.key: t for t in [LigandMD(), OpenMMImplicit(), QMMM(), ReactionScan(), CellRD()]}
 
 
 def list_tracks():

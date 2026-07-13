@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "name": "LIG",
+  "smiles": "CC(C)Cc1ccc(cc1)C(C)C(=O)O",
+  "inchikey": "HEFNNWSXXWATRW-JTQLQIEISA-N",
+  "n_atoms": 2133,
+  "ligand_atoms": 33,
+  "formal_charge": 0,
+  "net_partial_charge": 0.0,
+  "charge_method": "NAGL openff-gnn-am1bcc (AM1-BCC surrogate)",
+  "forcefield": "openff-2.2.0.offxml",
+  "solvated": true,
+  "n_waters": 700,
+  "water_model": "tip3p",
+  "top": "/home/v_u/Documents/gromacs-lab/simulations/_ligands/CC_C_Cc1ccc_cc1_C_C_C_O_O_openff_2_2_0_offxml_w700/LIG.top",
+  "gro": "/home/v_u/Documents/gromacs-lab/simulations/_ligands/CC_C_Cc1ccc_cc1_C_C_C_O_O_openff_2_2_0_offxml_w700/LIG.gro",
+  "cached": false,
+  "query": "ibuprofen"
+}

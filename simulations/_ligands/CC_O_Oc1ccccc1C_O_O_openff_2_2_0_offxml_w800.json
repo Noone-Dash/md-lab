@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "name": "LIG",
+  "smiles": "CC(=O)Oc1ccccc1C(=O)O",
+  "inchikey": "BSYNRYMUTXBXSQ-UHFFFAOYSA-N",
+  "n_atoms": 2421,
+  "ligand_atoms": 21,
+  "formal_charge": 0,
+  "net_partial_charge": -0.0,
+  "charge_method": "NAGL openff-gnn-am1bcc (AM1-BCC surrogate)",
+  "forcefield": "openff-2.2.0.offxml",
+  "solvated": true,
+  "n_waters": 800,
+  "water_model": "tip3p",
+  "top": "/home/v_u/Documents/gromacs-lab/simulations/_ligands/CC_O_Oc1ccccc1C_O_O_openff_2_2_0_offxml_w800/LIG.top",
+  "gro": "/home/v_u/Documents/gromacs-lab/simulations/_ligands/CC_O_Oc1ccccc1C_O_O_openff_2_2_0_offxml_w800/LIG.gro",
+  "cached": false,
+  "query": "aspirin"
+}
