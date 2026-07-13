@@ -105,9 +105,31 @@ def run_campaign(plan_dict: dict, run_id: str, target_ns: float, progress_cb=Non
     if (run_dir / f"{name}.cpt").exists():
         argv += ["-cpi", f"{name}.cpt"]          # exact continuation
 
+    # Publish progress WHILE mdrun runs. Without this the manifest only updates after
+    # the chunk ends, so nothing outside can see how far along the campaign is — and a
+    # preemption policy that cannot observe progress cannot act on it.
+    import threading
+    stop = threading.Event()
+
+    def _poll():
+        while not stop.wait(5.0):
+            try:
+                _, t_ps = _cpt_progress(run_dir, name)
+                if t_ps > 0:
+                    manifest["done_ns"] = round(t_ps / 1000.0, 4)
+                    manifest["progress_pct"] = round(
+                        min(100.0, 100.0 * t_ps / 1000.0 / target_ns), 1)
+                    push()
+            except Exception:  # noqa: BLE001
+                pass
+
+    watcher = threading.Thread(target=_poll, daemon=True)
+    watcher.start()
+
     t_start = time.time()
     gmx(argv, cwd=run_dir, log_path=log, check=False)   # SIGTERM here is FINE
     wall = time.time() - t_start
+    stop.set()
 
     step1, t1_ps = _cpt_progress(run_dir, name)
     done_ns = t1_ps / 1000.0

@@ -147,3 +147,37 @@ depend on it: the plan pipeline is deterministic with or without a model.
 - Cofactors: `4HHB` fails — amber99sb-ildn has no haem parameters.
 - Free-energy protocols (FEP/TI, umbrella, metadynamics) — Plumed is compiled in, unused.
 - Membrane/QM systems still go through legacy presets, not the Plan path.
+
+---
+
+## Adaptive GPU scheduling (opportunistic backfill)
+
+MD throughput is linear in GPU time (`work = duty × K`) — there is no batching gain. So a
+fixed "use 20% of the GPU" cap is strictly wasteful: it idles the other 80% whenever you
+are not using the machine. The policy implemented instead:
+
+> **Run long campaigns whenever the GPU is idle; yield instantly when it is wanted.**
+
+Expected utilisation → `1 − your_usage`, far above any fixed cap.
+
+Preemption is safe because it is a *checkpointed continuation*, not a restart. Verified
+from GROMACS's own log during a live campaign:
+
+```
+Writing checkpoint, step 181200
+Received the TERM signal, stopping within 100 steps    <- interactive job arrived
+Started mdrun on rank 0 ... (4 s later)
+Restarting from checkpoint, appending to previous log file
+Writing checkpoint, step 413900                        <- continued, not restarted
+```
+
+GPU released in ~4 s. Positions, velocities, thermostat/barostat state and the RNG stream
+are all restored, so the trajectory is continuous. Worst-case loss = work since the last
+checkpoint (`-cpt 1`, i.e. one minute).
+
+```python
+SCHED.submit_backfill(plan, target_ns=500)   # runs for weeks, in the gaps
+```
+
+Progress (`done_ns / target_ns`) is published live from the checkpoint, so the scheduler
+can observe and act on it.
