@@ -32,6 +32,10 @@ def minim_mdp(emtol: float = 1000.0, nsteps: int = 50000, rvdw: float = 1.0,
     })
 
 
+MAX_ENERGY_FRAMES = 100_000   # ~10 MB of .edr even for a microsecond run, and enough
+#                               samples that tau_int is actually resolvable.
+
+
 def md_mdp(*, nsteps: int, dt: float, temperature: float, ensemble: str = "NVT",
            coulombtype: str = "PME", rvdw: float = 1.0, rcoulomb: float = 1.0,
            tc_grps: str = "System", constraints: str = "none",
@@ -47,7 +51,14 @@ def md_mdp(*, nsteps: int, dt: float, temperature: float, ensemble: str = "NVT",
         "; output control": "",
         "nstxout-compressed": nstxout,     # .xtc trajectory for the viewer
         "compressed-x-precision": 1000,
-        "nstenergy": max(100, nstxout // 2),
+        # ENERGY sampling gets its OWN budget, not nstxout//2. Trajectory frames are
+        # all-atom coordinates and are budgeted for the VIEWER; energy frames are ~100
+        # bytes and are what every reported mean and error bar is computed from. Tying
+        # them together meant the physics evals sampled thermodynamics ~50 times per run
+        # -- far coarser than the correlation time -- so tau_int was unmeasurable and
+        # uncertainty.stats() correctly REFUSED to put an error bar on any of them.
+        # (Fixed in the plan path first; this is the legacy recipe path, same bug.)
+        "nstenergy": max(10, nsteps // MAX_ENERGY_FRAMES) if nsteps else 100,
         "nstlog": max(100, nstxout // 2),
         "; neighbour search": "",
         "cutoff-scheme": "Verlet",

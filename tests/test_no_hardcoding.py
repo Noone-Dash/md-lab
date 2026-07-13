@@ -25,8 +25,10 @@ FORBIDDEN = {
     r"100\.109\.29\.55": "the developer's Tailscale IP",
 }
 
-# config.py is ALLOWED to know about the environment — that is its job.
-ALLOWED = {"labkit/config.py", "tests/test_no_hardcoding.py", "README.md", "SETUP.md"}
+# config.py is ALLOWED to know about the environment — that is its job. The two test files
+# are allowed to NAME the forbidden constants, because asserting on them is the point.
+ALLOWED = {"labkit/config.py", "tests/test_no_hardcoding.py",
+           "tests/test_audit_regressions.py", "README.md", "SETUP.md"}
 
 
 def main() -> int:

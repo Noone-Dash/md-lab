@@ -89,14 +89,26 @@ otherwise is how MD demos lie.
 
 | benchmark | measured | reference |
 |---|---|---|
-| water density (SPC/E, NPT) | 989–998 kg/m³ | 997 (experiment) |
+| water density (SPC/E, NPT) | **996.9 ± 2.0** kg/m³ | 998 (SPC/E lit.); experiment 997 |
+| thermostat holds setpoint | **299.1 ± 1.1** K | 300 K |
 | water O–O first shell | 0.274 nm | 0.28 (neutron diffraction) |
-| thermostat holds setpoint | 299.0 K | 300 K |
 | QM water energy (HF/STO-3G) | −74.9659 Ha | −74.9659 (literature) |
 | O–H bond length | 0.99 Å | 0.96 (experiment) |
-| ubiquitin backbone RMSD | 0.10 nm | stays folded |
-| liquid argon g(r) peak | 2.90 | structured |
-| argon **gas** g(r) peak | 1.41 | `exp(ε/kT)` = **1.49** (analytic) |
+| liquid argon g(r) peak | 2.91 | structured |
+| argon **gas** g(r) peak | 1.42 | `exp(ε/kT)` = **1.49** (analytic) |
+| ubiquitin backbone RMSD | 0.098 nm* | stays folded |
+
+`±` is the autocorrelation-corrected 95% SEM (below). Entries without one are not time
+averages — an RDF peak and a converged SCF energy have no τ_int, so a bar would be
+meaningless. `*` marks a number the run was too short to put a defensible bar on: RMSD comes
+from *trajectory* frames, which are budgeted for the viewer, not for statistics.
+
+The density reference is the **water model's own** published value, not experiment —
+reproducing experiment is a property of SPC/E, not of this code. What the benchmark tests is
+whether *we* set the simulation up correctly. Its window used to be 975–1025 against
+"997 (experiment)", which is ±25 wide: it accepted SPC/E (999.7 ± 1.1, measured) and TIP3P
+(986.0 ± 1.3, measured) **equally**, though they are 8σ apart. It could not detect a run
+using the wrong water model. It was passing for the wrong reason.
 
 The gas test initially *failed* (2.19). The simulation was right; the **metric** was wrong —
 it was taking the max of a noisy 624-bin histogram and grabbing a single-bin spike. Fixed
