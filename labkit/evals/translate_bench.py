@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import statistics
 import sys
 import time
@@ -40,11 +41,31 @@ RESULTS = DATA_DIR / "translate_bench.json"
 _HDR_CACHE = DATA_DIR / "_pdb_headers"
 
 
+def pdb_reachable() -> bool:
+    """Checked ONCE, up front. Offline must be reported as offline, not scored as zero."""
+    import urllib.request
+    try:
+        urllib.request.urlopen("https://files.rcsb.org/header/1AKI.pdb", timeout=15).read(1)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def pdb_title(pdb_id: str) -> str | None:
-    """The REAL title of a PDB entry, from the PDB. None if it does not exist/offline."""
+    """The REAL title of a PDB entry, from the PDB.
+
+    Three OUTCOMES, and conflating them is how a model's wrong answer gets misreported
+    as an infrastructure failure (it did: a model returning pdb_id=None killed an entire
+    benchmark row with 'PDB unreachable'):
+        ""    -> definitively NOT a valid PDB entry. The model is WRONG.
+        None  -> we could not reach the PDB. UNKNOWN. Never score this.
+        text  -> the entry's real title.
+    """
+    if pdb_id is None:
+        return ""                       # the model omitted it. That is an answer, and it is wrong.
     pdb_id = str(pdb_id).strip().upper()
-    if len(pdb_id) != 4:
-        return None
+    if not re.fullmatch(r"[0-9][A-Z0-9]{3}", pdb_id):
+        return ""                       # not even the shape of a PDB ID. Wrong, not offline.
     _HDR_CACHE.mkdir(parents=True, exist_ok=True)
     cached = _HDR_CACHE / f"{pdb_id}.txt"
     if cached.exists():
@@ -66,6 +87,10 @@ def pdb_title(pdb_id: str) -> str | None:
     return txt
 
 
+class Unreachable(RuntimeError):
+    """We could not check. Distinct from 'the model was wrong'."""
+
+
 class IsProtein:
     """Grades a PDB ID by what it ACTUALLY IS, not by whether it equals my guess.
 
@@ -82,7 +107,7 @@ class IsProtein:
     def __call__(self, got) -> bool:
         title = pdb_title(got)
         if title is None:
-            raise RuntimeError("PDB unreachable — cannot grade this case offline")
+            raise Unreachable("PDB unreachable — cannot grade this case offline")
         return any(k in title for k in self.keywords)
 
     def __str__(self):
@@ -202,17 +227,23 @@ def wilson(s, n, z=1.96):
 def _grade(plan, checks):
     if not plan:
         return 0, len(checks), ["no plan"]
-    ok, fails = 0, []
+    ok, n = 0, 0
+    fails = []
     for name, (getter, expected, tol) in checks.items():
+        n += 1
         try:
             got = getter(plan)
         except Exception:  # noqa: BLE001
             got = None
-        if got is None:
+        if got is None and not isinstance(expected, IsProtein):
             fails.append(f"{name}=missing")
             continue
         if isinstance(expected, IsProtein):        # grounded: ask the PDB, not a table
-            good = expected(got)
+            try:
+                good = expected(got)
+            except Unreachable:
+                fails.append(f"{name}=UNGRADABLE(offline)")
+                continue                           # excluded from BOTH numerator and denominator
         elif tol is None:
             good = str(got).lower() == str(expected).lower()
         else:
@@ -224,7 +255,8 @@ def _grade(plan, checks):
             ok += 1
         else:
             fails.append(f"{name}={got}!={expected}")
-    return ok, len(checks), fails
+    ungradable = sum(1 for f in fails if "UNGRADABLE" in f)
+    return ok, n - ungradable, fails
 
 
 def run_model(model, k=2, verbose=True):
@@ -277,6 +309,10 @@ def run_model(model, k=2, verbose=True):
 
 
 def main(models, k=2):
+    if not pdb_reachable():
+        print("WARNING: RCSB unreachable. The out-of-dictionary protein cases CANNOT be\n"
+              "         graded and will be excluded from the denominator — not scored 0.\n"
+              "         The UNCOVERED column will be empty. Re-run with network access.\n")
     out = []
     for m in models:
         print(f"\n=== {m} ===", flush=True)

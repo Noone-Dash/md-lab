@@ -1,0 +1,1 @@
+the 2.2 angstroms crystal structure of transducin-alpha complexed with gtp gamma s mol_id: 1; molecule: transducin; chain: a, b, c; engineered: yes

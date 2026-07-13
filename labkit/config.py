@@ -135,8 +135,8 @@ def mdrun_flags() -> list:
     info = find_gromacs()
     flags = []
     if info.get("mpi") == "thread_mpi":
-        flags += ["-nt" "mpi", "1"]      # thread-MPI builds only
-    flags += ["-nt" "omp", str(allowed_cores())]
+        flags += ["-ntmpi", "1"]         # thread-MPI builds only
+    flags += ["-ntomp", str(allowed_cores())]
     return flags
 
 

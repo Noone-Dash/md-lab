@@ -5,76 +5,206 @@
   {
    "id": "water_density",
    "title": "Water reaches its real density",
-   "why": "SPC/E water at 300 K, 1 bar must settle near 1000 kg/m³ (experiment: 997). If the box, the ions or the barostat are wrong, this is the first thing that breaks.",
-   "run": {"kind": "recipe", "key": "water_box",
-           "params": {"box_nm": 2.5, "water_model": "spce", "temperature": 300,
-                      "ensemble": "NPT", "nsteps": 20000}},
-   "metric": {"type": "energy_mean", "term": "Density", "last_frac": 0.5},
-   "unit": "kg/m³", "expect": {"min": 975, "max": 1025}, "reference": "997 (experiment, 298 K)"
+   "why": "SPC/E water at 300 K, 1 bar. The reference is the WATER MODEL's own published density (998), not experiment (997) \u2014 reproducing experiment is a property of SPC/E, not of our code. What this tests is whether WE set the simulation up correctly. The old window (975\u20131025) was wide enough to accept TIP3P (986.0 \u00b1 1.3, measured) as well as SPC/E (999.7 \u00b1 1.1, measured) \u2014 the two are 8\u03c3 apart, so it could not tell a correct setup from one running the wrong water model. It passed for the wrong reason.",
+   "run": {
+    "kind": "recipe",
+    "key": "water_box",
+    "params": {
+     "box_nm": 2.5,
+     "water_model": "spce",
+     "temperature": 300,
+     "ensemble": "NPT",
+     "nsteps": 250000
+    }
+   },
+   "metric": {
+    "type": "energy_mean",
+    "term": "Density",
+    "last_frac": 0.5
+   },
+   "unit": "kg/m\u00b3",
+   "expect": {
+    "min": 990,
+    "max": 1008
+   },
+   "reference": "998 (SPC/E, Mark & Nilsson JPCA 2001); experiment 997"
   },
   {
    "id": "water_structure",
    "title": "Water's hydrogen-bond shell is in the right place",
-   "why": "The first peak of the O–O radial distribution function is at 0.28 nm in real water (neutron scattering). This is the structure of liquid water itself.",
-   "run": {"kind": "recipe", "key": "water_box",
-           "params": {"box_nm": 2.5, "water_model": "spce", "temperature": 300,
-                      "ensemble": "NPT", "nsteps": 20000}},
-   "metric": {"type": "rdf_peak", "which": "pos"},
-   "unit": "nm", "expect": {"min": 0.26, "max": 0.30}, "reference": "0.28 (neutron diffraction)"
+   "why": "The first peak of the O\u2013O radial distribution function is at 0.28 nm in real water (neutron scattering). This is the structure of liquid water itself.",
+   "run": {
+    "kind": "recipe",
+    "key": "water_box",
+    "params": {
+     "box_nm": 2.5,
+     "water_model": "spce",
+     "temperature": 300,
+     "ensemble": "NPT",
+     "nsteps": 20000
+    }
+   },
+   "metric": {
+    "type": "rdf_peak",
+    "which": "pos"
+   },
+   "unit": "nm",
+   "expect": {
+    "min": 0.26,
+    "max": 0.3
+   },
+   "reference": "0.28 (neutron diffraction)"
   },
   {
    "id": "thermostat_holds",
    "title": "The thermostat actually holds the temperature",
    "why": "Mean temperature must equal the setpoint. If it drifts, the integrator or coupling is broken and every result downstream is garbage.",
-   "run": {"kind": "recipe", "key": "water_box",
-           "params": {"box_nm": 2.5, "temperature": 300, "ensemble": "NPT", "nsteps": 20000}},
-   "metric": {"type": "energy_mean", "term": "Temperature", "last_frac": 0.5},
-   "unit": "K", "expect": {"min": 295, "max": 305}, "reference": "300 (the setpoint)"
+   "run": {
+    "kind": "recipe",
+    "key": "water_box",
+    "params": {
+     "box_nm": 2.5,
+     "temperature": 300,
+     "ensemble": "NPT",
+     "nsteps": 20000
+    }
+   },
+   "metric": {
+    "type": "energy_mean",
+    "term": "Temperature",
+    "last_frac": 0.5
+   },
+   "unit": "K",
+   "expect": {
+    "min": 295,
+    "max": 305
+   },
+   "reference": "300 (the setpoint)"
   },
   {
    "id": "lj_liquid_is_structured",
    "title": "Liquid argon is structured",
    "why": "A dense liquid has a strong first coordination shell: g(r) peaks well above 2. If this is flat, we are not simulating a liquid.",
-   "run": {"kind": "recipe", "key": "lj_argon",
-           "params": {"n_atoms": 500, "density": 21, "temperature": 90, "nsteps": 20000}},
-   "metric": {"type": "rdf_peak", "which": "height"},
-   "unit": "g(r)", "expect": {"min": 2.0, "max": 4.5}, "reference": ">2 for a dense LJ liquid"
+   "run": {
+    "kind": "recipe",
+    "key": "lj_argon",
+    "params": {
+     "n_atoms": 500,
+     "density": 21,
+     "temperature": 90,
+     "nsteps": 20000
+    }
+   },
+   "metric": {
+    "type": "rdf_peak",
+    "which": "height"
+   },
+   "unit": "g(r)",
+   "expect": {
+    "min": 2.0,
+    "max": 4.5
+   },
+   "reference": ">2 for a dense LJ liquid"
   },
   {
    "id": "lj_gas_is_unstructured",
    "title": "Argon gas is NOT structured",
    "why": "The same code at low density must give a nearly flat g(r). This is the control: it proves the previous test measured physics, not an artefact.",
-   "run": {"kind": "recipe", "key": "lj_argon",
-           "params": {"n_atoms": 500, "density": 2, "temperature": 300, "nsteps": 20000}},
-   "metric": {"type": "rdf_peak", "which": "height"},
-   "unit": "g(r)", "expect": {"min": 0.8, "max": 1.8}, "reference": "~1 for a dilute gas"
+   "run": {
+    "kind": "recipe",
+    "key": "lj_argon",
+    "params": {
+     "n_atoms": 500,
+     "density": 2,
+     "temperature": 300,
+     "nsteps": 20000
+    }
+   },
+   "metric": {
+    "type": "rdf_peak",
+    "which": "height"
+   },
+   "unit": "g(r)",
+   "expect": {
+    "min": 0.8,
+    "max": 1.8
+   },
+   "reference": "~1 for a dilute gas"
   },
   {
    "id": "qm_water_energy",
    "title": "Quantum energy of water matches the textbook",
-   "why": "Hartree–Fock/STO-3G on water is a canonical number: −74.96 Hartree. Any competent QM code reproduces it exactly.",
-   "run": {"kind": "track", "key": "qmmm_opt",
-           "params": {"molecule": "water", "method": "HF", "basis": "sto-3g"}},
-   "metric": {"type": "summary", "key": "Final QM energy"},
-   "unit": "Hartree", "expect": {"min": -74.99, "max": -74.93}, "reference": "-74.9659 (HF/STO-3G, literature)"
+   "why": "Hartree\u2013Fock/STO-3G on water is a canonical number: \u221274.96 Hartree. Any competent QM code reproduces it exactly.",
+   "run": {
+    "kind": "track",
+    "key": "qmmm_opt",
+    "params": {
+     "molecule": "water",
+     "method": "HF",
+     "basis": "sto-3g"
+    }
+   },
+   "metric": {
+    "type": "summary",
+    "key": "Final QM energy"
+   },
+   "unit": "Hartree",
+   "expect": {
+    "min": -74.99,
+    "max": -74.93
+   },
+   "reference": "-74.9659 (HF/STO-3G, literature)"
   },
   {
    "id": "oh_bond_length",
-   "title": "The O–H bond comes out the right length",
-   "why": "Scanning the bond must put the energy minimum at the real O–H distance (~0.96 Å). This validates the whole reaction-profile machinery.",
-   "run": {"kind": "track", "key": "reaction_scan",
-           "params": {"system": "water (O–H)", "method": "HF", "basis": "sto-3g", "n_points": 20}},
-   "metric": {"type": "summary", "key": "Equilibrium bond"},
-   "unit": "Å", "expect": {"min": 0.90, "max": 1.10}, "reference": "0.96 (experiment)"
+   "title": "The O\u2013H bond comes out the right length",
+   "why": "Scanning the bond must put the energy minimum at the real O\u2013H distance (~0.96 \u00c5). This validates the whole reaction-profile machinery.",
+   "run": {
+    "kind": "track",
+    "key": "reaction_scan",
+    "params": {
+     "system": "water (O\u2013H)",
+     "method": "HF",
+     "basis": "sto-3g",
+     "n_points": 20
+    }
+   },
+   "metric": {
+    "type": "summary",
+    "key": "Equilibrium bond"
+   },
+   "unit": "\u00c5",
+   "expect": {
+    "min": 0.9,
+    "max": 1.1
+   },
+   "reference": "0.96 (experiment)"
   },
   {
    "id": "protein_stays_folded",
    "title": "A stable protein stays folded",
-   "why": "Ubiquitin is a rigid, well-behaved protein. Backbone RMSD must plateau low (< 0.4 nm). A big number means the force field, ions or box are wrong — or it unfolded, which it should not.",
-   "run": {"kind": "recipe", "key": "protein",
-           "params": {"pdb_id": "1UBQ", "temperature": 300, "conc": 0.15, "nsteps": 25000}},
-   "metric": {"type": "analysis_final", "name": "rmsd", "last_frac": 0.3},
-   "unit": "nm", "expect": {"min": 0.0, "max": 0.40}, "reference": "<0.3 nm typical for ubiquitin"
+   "why": "Ubiquitin is a rigid, well-behaved protein. Backbone RMSD must plateau low (< 0.4 nm). A big number means the force field, ions or box are wrong \u2014 or it unfolded, which it should not.",
+   "run": {
+    "kind": "recipe",
+    "key": "protein",
+    "params": {
+     "pdb_id": "1UBQ",
+     "temperature": 300,
+     "conc": 0.15,
+     "nsteps": 25000
+    }
+   },
+   "metric": {
+    "type": "analysis_final",
+    "name": "rmsd",
+    "last_frac": 0.3
+   },
+   "unit": "nm",
+   "expect": {
+    "min": 0.0,
+    "max": 0.4
+   },
+   "reference": "<0.3 nm typical for ubiquitin"
   }
  ]
 }
