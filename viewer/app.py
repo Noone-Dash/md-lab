@@ -287,7 +287,8 @@ def api_evals_run():
 
 
 # ---- structure explorer (load real molecules from public databases) --------- #
-STRUCT_CACHE = ROOT / "data" / "structures"
+from labkit.config import DATA_DIR as _DATA
+STRUCT_CACHE = _DATA / "structures"
 
 
 @app.route("/explore")

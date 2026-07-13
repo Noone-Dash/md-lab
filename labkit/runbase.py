@@ -10,7 +10,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-RUNS_DIR = Path(__file__).resolve().parent.parent / "simulations" / "runs"
+from .config import RUNS_DIR
 
 # element -> role mapping we use for coloured particles in 3Dmol
 #   N blue · O red · S yellow · C grey · P orange

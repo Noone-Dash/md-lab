@@ -53,7 +53,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from labkit.agent import chat as C          # noqa: E402
 from labkit.plan.schema import Plan, PlanError   # noqa: E402
 
-RESULTS = Path(__file__).resolve().parent.parent.parent / "simulations" / "agent_bench.json"
+from labkit.config import DATA_DIR as _DATA
+RESULTS = _DATA / "agent_bench.json"
 
 
 # --------------------------------------------------------------------------- #

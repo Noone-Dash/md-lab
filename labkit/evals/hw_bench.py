@@ -20,7 +20,8 @@ from labkit.plan import Plan                    # noqa: E402
 from labkit.plan.build import build             # noqa: E402
 from labkit.engine import RUNS_DIR              # noqa: E402
 
-OUT = RUNS_DIR.parent / "hw_bench.json"
+from labkit.config import DATA_DIR as _DATA
+OUT = _DATA / "hw_bench.json"
 
 # representative biomolecular systems, small -> large
 # Same protein, growing solvent shell: isolates the size-scaling law with no

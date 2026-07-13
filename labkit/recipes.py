@@ -21,8 +21,19 @@ from .mdp import minim_mdp, md_mdp, martini_em_mdp, martini_md_mdp
 from .gro import lattice_gro, read_box
 
 FF = "amber99sb-ildn.ff"  # ships every water model + ions we need
-MART_DIR = Path(__file__).resolve().parent.parent / "assets" / "martini"
-INSANE = Path(sys.prefix) / "bin" / "insane"      # the venv's insane console script
+from .config import ASSETS_DIR as _ASSETS
+MART_DIR = _ASSETS / "martini"
+
+
+def _insane_bin():
+    """Locate the `insane` console script. It is NOT always at sys.prefix/bin
+    (pip --user, conda, system install all put it elsewhere)."""
+    import shutil as _sh
+    return (_sh.which("insane")
+            or str(Path(sys.prefix) / "bin" / "insane"))
+
+
+INSANE = _insane_bin()
 
 
 # --------------------------------------------------------------------------- #

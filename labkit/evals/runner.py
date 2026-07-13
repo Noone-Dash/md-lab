@@ -12,7 +12,8 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-RESULTS = HERE.parent.parent / "simulations" / "eval_results.json"
+from ..config import DATA_DIR as _DATA
+RESULTS = _DATA / "eval_results.json"
 BENCH = json.loads((HERE / "benchmarks.json").read_text())["benchmarks"]
 
 from .metrics import extract           # noqa: E402

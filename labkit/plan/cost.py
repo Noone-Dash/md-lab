@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-RUNS = Path(__file__).resolve().parent.parent.parent / "simulations" / "runs"
+from ..config import RUNS_DIR as RUNS
 
 # fallback throughput, atom-steps per second, measured on the GB10 during this build
 DEFAULT_ATOM_STEPS_PER_S = {"atomistic": 2.6e7, "martini": 6.0e7}

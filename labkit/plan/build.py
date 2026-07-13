@@ -80,8 +80,15 @@ def build(plan, run_dir: Path):
         url = (f"https://files.rcsb.org/download/{pdb_id}.pdb"
                if s.structure_source == "rcsb"
                else f"https://alphafold.ebi.ac.uk/files/AF-{pdb_id}-F1-model_v4.pdb")
-        with urllib.request.urlopen(url, timeout=30) as r:
-            (run_dir / "input.pdb").write_bytes(r.read())
+        try:
+            with urllib.request.urlopen(url, timeout=30) as r:
+                (run_dir / "input.pdb").write_bytes(r.read())
+        except Exception as e:  # noqa: BLE001
+            raise RuntimeError(
+                f"Could not fetch {pdb_id} from {url} ({e}).\n"
+                f"Compute nodes are frequently offline. Either fetch the PDB on a login "
+                f"node and use system.structure_source='file' with a local input.pdb, "
+                f"or run where the network is reachable.") from e
 
         p2g = ["pdb2gmx", "-f", "input.pdb", "-o", "processed.gro", "-p", "topol.top",
                "-ff", ff, "-water", water]
