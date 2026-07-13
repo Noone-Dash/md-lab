@@ -6,9 +6,10 @@ every step so the web UI can poll live progress.
 from __future__ import annotations
 
 import json
+import os
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .gmx import gmx, gmx_version, GmxError
@@ -24,7 +25,49 @@ def _now():
 
 
 def _save(manifest, run_dir):
+    # Stamp WHO is running this and WHEN we last heard from them. Without it, a run whose
+    # process dies leaves status="running" in the manifest forever and the UI shows it
+    # spinning for eternity (tau_water_probe did exactly this). Nothing could tell a live
+    # run from a corpse, because nothing recorded that a live run has an owner.
+    if manifest.get("status") == "running":
+        manifest["pid"] = os.getpid()
+        manifest["heartbeat"] = _now()
     (run_dir / "run.json").write_text(json.dumps(manifest, indent=2))
+
+
+STALE_AFTER_S = 300
+
+
+def _reconcile(m: dict) -> dict:
+    """A manifest that CLAIMS to be running, but is not. Say so."""
+    if m.get("status") != "running":
+        return m
+    pid = m.get("pid")
+    alive = False
+    if pid:
+        try:
+            os.kill(int(pid), 0)          # signal 0: does the process exist?
+            alive = True
+        except (OSError, ValueError, TypeError):
+            alive = False
+    if alive:
+        return m
+    # No owner. If we never recorded one, fall back to the heartbeat so that runs written
+    # by an older version of this code are still reconciled rather than spinning forever.
+    hb = m.get("heartbeat") or m.get("created")
+    if pid is None and hb:
+        try:
+            age = (datetime.now(timezone.utc)
+                   - datetime.fromisoformat(str(hb)).replace(tzinfo=timezone.utc)).total_seconds()
+            if age < STALE_AFTER_S:
+                return m                  # young and unowned: probably just started
+        except Exception:  # noqa: BLE001
+            pass
+    m = dict(m)
+    m["status"] = "interrupted"
+    m["detail"] = ("the process running this died without finishing "
+                   "(killed, crashed, or the machine went away)")
+    return m
 
 
 def _count_pdb(path):
@@ -244,7 +287,7 @@ def load_run(run_id):
     f = RUNS_DIR / run_id / "run.json"
     if not f.exists():
         return None
-    return json.loads(f.read_text())
+    return _reconcile(json.loads(f.read_text()))
 
 
 def list_runs():
@@ -254,8 +297,8 @@ def list_runs():
     for d in sorted(RUNS_DIR.iterdir(), reverse=True):
         f = d / "run.json"
         if f.exists():
-            m = json.loads(f.read_text())
+            m = _reconcile(json.loads(f.read_text()))
             runs.append({k: m.get(k) for k in
                          ("id", "recipe", "recipe_name", "category", "track",
-                          "engine", "mode", "status", "created", "params")})
+                          "engine", "mode", "status", "created", "params", "detail")})
     return runs
