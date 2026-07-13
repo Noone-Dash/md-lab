@@ -15,25 +15,54 @@ reaction–diffusion model. Hardware: NVIDIA **GB10** (Grace-Blackwell, unified 
 ## The architecture (and why)
 
 ```
-request ──X──▶ Intent          (pure code: regex/lookup — NO model)
+request ──X──▶ Intent          (pure code: regex/lookup/units — NO model)
+        ├─S──▶ pdb_id          (the PDB's own search API, title-verified)
         └─T──▶ Plan_raw        (small LLM, JSON-Schema-constrained decoding)
-(Plan_raw, Intent) ──E──▶ Plan (pure code: projection — OVERWRITES the model)
+(Plan_raw, Intent) ──E──▶ Plan (pure code: projection + provenance)
 Plan ──D──▶ .mdp / topology    (pure code)  ──▶ GROMACS
 ```
 
-`X`, `E`, `D` are pure functions. Let `F` be the set of plan fields with physical
-consequence (16 of them). The system guarantees
+Every physical field belongs to exactly one of three classes, and the LLM owns none of them
+outright:
 
-```
-∀ f ∈ F :  Plan[f] = g_f(Intent, defaults)      — independent of the model's output
-```
+| class | examples | source | can the model touch it? |
+|---|---|---|---|
+| **derived physics** | `dt`, constraints, cutoffs, thermostat/barostat, output rates | a pure function of force field + regime | **never** |
+| **user preference** | temperature, ensemble, duration, box, salt, water model, force field | intent → model → default | only to **read** it from the sentence |
+| **structure** | `pdb_id` | curated table → PDB search → title verification | it may **name** the protein; it may not **choose** one |
 
-**Residual model-decided physical fields: 0 / 16.** Verified adversarially: feeding a
-maximally-wrong model output (`pdb=9ZZZ`, wrong force field, wrong water model, 500 K,
-9 ns, 1 stage) produces a plan *identical on all of F* to the correct one. The model's
-output on `F` is discarded by construction, not merely validated.
+### The model may PARSE. It may not INVENT.
 
-Two independent guards, because they catch different things:
+Reading "blood heat" → 310 K out of a sentence is *natural-language parsing* — the model's
+actual competence, and not physics. Choosing 500 K for a request that never mentions
+temperature is *fabrication*. The difference is whether the sentence contains anything to
+read, so a model-supplied value is accepted **only when the request mentions the concept at
+all** (`defaults.has_evidence`). Measured against a maximally-wrong model:
+
+| request | `.mdp` keys the model controls |
+|---|---|
+| `"Simulate lysozyme"` (mentions no temperature, ensemble or duration) | **0 / 36** |
+| a fully-specified request | **0 / 32** |
+| `"...at blood heat"` (says something the regex cannot parse) | 2 / 36, both marked `[model]` |
+
+That last row is the **irreducible residual**, and it is the honest one: when the user says
+something the contract cannot parse, the model reads it. It is bounded to exactly those
+fields, it is **labelled**, and it still faces the 26 physics rules. Shrinking it means
+extending coverage — which moves values from `[model]` to `[intent]`.
+
+Every value in a plan carries its **provenance** (`intent | model | default | derived`), so
+*"the LLM chose your temperature"* can never be an invisible fact.
+
+### Is the LLM even necessary?
+
+Largely, no — and that is the point. Across all 10 `translate_bench` requests, a **null
+model** emitting an empty skeleton produces a `.mdp` **identical to gpt-oss:20b's, key for
+key**. `plan_from_request(use_llm=False)` runs the whole pipeline with no model at all and
+builds and runs a real solvated 4-stage lysozyme simulation. The model earns its place only
+on phrasing the contract does not parse — and `ood_bench` measures exactly when that happens
+instead of assuming it.
+
+### Two independent guards, because they catch different things
 
 | Guard | Answers | Implementation |
 |---|---|---|
@@ -43,9 +72,44 @@ Two independent guards, because they catch different things:
 A plan with `salt = 0.0 M` is *legal physics* and *completely wrong* if you asked for
 physiological salt. No physics checker will ever catch that — hence the intent contract.
 
-Additional invariant: `mdp_emit` is the only module permitted to write a `.mdp` file, and
-it **raises** on any key not declared in `labkit/data/ontology.json` (150 documented
-parameters). An undocumented knob cannot reach a simulation.
+`mdp_emit` is the only module permitted to write a `.mdp`, and it **raises** on any key not
+declared in `labkit/data/ontology.json` (150 documented parameters). An undocumented knob
+cannot reach a simulation.
+
+### Which local model? (`labkit/evals/translate_bench.py`)
+
+| model | final | 95% CI | uncovered | median latency | invalid plans |
+|---|---|---|---|---|---|
+| **gpt-oss:20b** | **0.97** | [0.89, 0.99] | 1.00 | **12 s** | **0** |
+| qwen3:14b | 0.97 | [0.89, 0.99] | 1.00 | 72 s | 5 |
+| qwen3:8b | 0.84 | [0.74, 0.91] | 1.00 | 38 s | 2 |
+
+**Run gpt-oss:20b** — but note *why*: after the deterministic layer, all three score
+identically on covered intents and on structure resolution. Model choice is a **latency**
+decision, not a correctness one. A weaker model costs you speed, not physics.
+
+### Out-of-distribution coverage (`labkit/evals/ood_bench.py`)
+
+`translate_bench` measures the request space the regexes were written *for* — that is
+teaching to the test. `ood_bench` uses phrasings deliberately chosen to be outside it:
+
+| | before | after |
+|---|---|---|
+| parsed by the deterministic contract | 2/13 | **10/13** |
+| the LLM earns its place (semantic inference) | 8/13 | 3/13 |
+| **silently defaulted** — the real failure mode | 3/13 | **0/13** |
+
+The boundary that emerged, and it is now explicit: **lexical** variation (units, spellings,
+synonyms — "350 kelvin", "15 angstroms", "half a nanosecond", "no counterions") belongs to
+code. **Semantic** inference ("blood heat", "just below the boiling point of water") belongs
+to the model. A request that grounds in *neither* is **refused**, not quietly defaulted:
+
+```
+"the enzyme that digests starch"       -> 1PIF  pig alpha-amylase        (model named it, PDB confirmed it)
+"the protein that carries oxygen"      -> 4HHB  human deoxyhaemoglobin
+"the enzyme that unwinds DNA"          -> REFUSED — could not ground it, and says so
+"the protein that does the thing"      -> REFUSED — the request names nothing
+```
 
 ---
 
