@@ -15,8 +15,7 @@ from .gmx import gmx, gmx_version, GmxError
 from .recipes import get_recipe
 from .xvg import parse_xvg
 
-ROOT = Path(__file__).resolve().parent.parent
-RUNS_DIR = ROOT / "simulations" / "runs"
+from .config import REPO_ROOT as ROOT, RUNS_DIR   # honours $MDLAB_DATA (cluster scratch)
 FRAME_CAP = 150                     # keep viewer trajectories light
 
 

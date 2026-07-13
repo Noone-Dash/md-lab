@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mdlab"
+version = "0.1.0"
+description = "Deterministic MD simulation planning: an LLM that cannot touch the physics"
+requires-python = ">=3.10"
+dependencies = ["flask>=3.0", "numpy>=1.26", "psutil>=5.9"]
+
+[project.optional-dependencies]
+engines = ["openmm>=8.5", "pyscf>=2.13", "ase>=3.26"]
+martini = ["setuptools<81", "insane>=1.2"]
+cloud   = ["anthropic>=0.40"]
+
+[project.scripts]
+labkit-doctor = "labkit.doctor:main"
+
+[tool.setuptools]
+packages = ["labkit", "labkit.plan", "labkit.agent", "labkit.evals", "labkit.tracks", "labkit.data"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+"labkit.data" = ["*.json"]
+"labkit.evals" = ["*.json"]

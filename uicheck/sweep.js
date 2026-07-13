@@ -1,3 +1,4 @@
+const BASE = process.env.MDLAB_URL || 'http://127.0.0.1:5057';
 // Full sweep: every page + one run per track. Reports console errors and blank canvases.
 const { chromium } = require('playwright');
 
@@ -19,7 +20,7 @@ const PAGES = [
 ];
 
 (async () => {
-  const base = 'http://127.0.0.1:5057';
+  const base = BASE;
   const browser = await chromium.launch({
     args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
   });

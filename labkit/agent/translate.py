@@ -27,9 +27,9 @@ from ..plan.jsonschema import plan_schema, legal_values
 from ..plan.schema import Plan, PlanError
 from ..plan.validate import validate
 
-OLLAMA = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+from ..config import OLLAMA_HOST as OLLAMA, pick_model, CHAT_MODEL_PREF, TRANSLATE_MODEL_PREF
 # a small CODING model: its job is grammar/syntax, which is exactly what it is good at
-TRANSLATOR = os.environ.get("MDLAB_TRANSLATOR", "qwen2.5-coder:32b")
+TRANSLATOR = pick_model(TRANSLATE_MODEL_PREF) or "qwen3:8b"  # whatever is ACTUALLY pulled
 SEED = 7
 
 SYSTEM = """You translate a request for a molecular-dynamics simulation into a Plan object.

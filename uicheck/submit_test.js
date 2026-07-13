@@ -1,9 +1,10 @@
+const BASE = process.env.MDLAB_URL || 'http://127.0.0.1:5057';
 // Drive the UI like a human: pick an experiment, tweak a param, click Launch,
 // wait for the run to finish, screenshot. Proof that submit actually works.
 const { chromium } = require('playwright');
 
 (async () => {
-  const base = process.argv[2] || 'http://127.0.0.1:5057';
+  const base = process.argv[2] || BASE;
   const browser = await chromium.launch({
     args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
   });

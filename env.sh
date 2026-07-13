@@ -1,15 +1,20 @@
-# Source me:  source env.sh
-# Sets up GROMACS + the labkit Python venv for an interactive session.
-export GMX_ROOT="${GMX_ROOT:-/home/v_u/Documents/tools/opt/gromacs-2026.2}"
-source "$GMX_ROOT/bin/GMXRC" >/dev/null 2>&1
+# source me:  source env.sh
+# Resolves the environment WITHOUT assuming anyone's directory layout.
 
-LAB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -d "$LAB_DIR/.venv" ]; then
-  source "$LAB_DIR/.venv/bin/activate"
+_here="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+
+# --- GROMACS: only set GMX_ROOT if you have a prefix install.
+# If `gmx` is already on PATH (e.g. after `module load gromacs`), nothing to do.
+if ! command -v gmx >/dev/null 2>&1 && [ -z "${GMX_ROOT:-}" ]; then
+  for _p in /usr/local/gromacs /opt/gromacs "$HOME/gromacs" "$HOME/opt/gromacs"; do
+    for _c in "$_p" "$_p"-*; do
+      if [ -x "$_c/bin/gmx" ]; then export GMX_ROOT="$_c"; break 2; fi
+    done
+  done
 fi
+[ -n "${GMX_ROOT:-}" ] && [ -f "$GMX_ROOT/bin/GMXRC" ] && . "$GMX_ROOT/bin/GMXRC"
 
-echo "GROMACS lab ready:"
-echo "  gmx           -> $(command -v gmx)"
-echo "  python        -> $(command -v python)"
-echo "  ./labctl.py list        # see simulations"
-echo "  python viewer/app.py    # launch the web UI (http://127.0.0.1:5000)"
+# --- python venv, if one exists next to the repo
+[ -d "$_here/.venv" ] && . "$_here/.venv/bin/activate"
+
+echo "Run  python -m labkit.doctor  to check the environment."

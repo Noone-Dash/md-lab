@@ -391,8 +391,13 @@ def run_traj(run_id):
 
 
 if __name__ == "__main__":
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 5000
-    # bind all interfaces so you can open it from another device on your tailnet
-    host = os.environ.get("MDLAB_HOST", "0.0.0.0")
-    print(f"MD Lab UI  ->  http://127.0.0.1:{port}   (also on your LAN/Tailscale IP)")
+    from labkit import config as C
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else C.UI_PORT
+    # Loopback by DEFAULT. Binding 0.0.0.0 on a shared cluster would expose an API
+    # that can launch compute. Opt in explicitly: MDLAB_HOST=0.0.0.0
+    host = C.UI_HOST
+    print(f"MD Lab UI  ->  http://{'127.0.0.1' if host == '0.0.0.0' else host}:{port}")
+    if host == "0.0.0.0":
+        print("  WARNING: bound to 0.0.0.0 — reachable from the network, and /api/plan/run "
+              "can start jobs. Do not do this on a shared machine without auth.")
     app.run(host=host, port=port, threaded=True, debug=False)

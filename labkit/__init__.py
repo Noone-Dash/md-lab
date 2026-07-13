@@ -5,12 +5,12 @@ The lab is organised around *recipes* (parametric simulation definitions) and an
 pipeline, and extracts analysis data for the viewer UI.
 """
 
-from .gmx import GMX_ROOT, gmx, gmx_version
+from .gmx import gmx, gmx_version
 from .recipes import REGISTRY, get_recipe, list_recipes
 from .engine import run_recipe, load_run, list_runs
 
 __all__ = [
-    "GMX_ROOT",
+
     "gmx",
     "gmx_version",
     "REGISTRY",

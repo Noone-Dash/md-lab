@@ -55,9 +55,12 @@ function showNoKey(msg){
   const el = $("#nokey");
   el.classList.remove("hidden");
   el.innerHTML = `<b>The chatbot needs an API key to think.</b>
-    <p>On the lab machine (<code>spark-8d6e</code>) run:</p>
-    <pre>export ANTHROPIC_API_KEY=sk-ant-...
-# then restart:  python viewer/app.py 5057</pre>
+    <p>On the machine running the lab:</p>
+    <pre>ollama serve &amp;
+ollama pull qwen3:8b        # local, no API key
+# ...or use a cloud model:
+export ANTHROPIC_API_KEY=sk-ant-...
+# then restart the server</pre>
     <p class="muted">Everything else — Plan Builder, Evals, the viewer, the scheduler — works without it.</p>`;
 }
 

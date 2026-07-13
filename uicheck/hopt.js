@@ -1,8 +1,9 @@
+const BASE = process.env.MDLAB_URL || 'http://127.0.0.1:5057';
 const { chromium } = require('playwright');
 (async () => {
   const b = await chromium.launch({ args:['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader'] });
   const p = await b.newPage();
-  await p.goto('http://127.0.0.1:5057/explore', { waitUntil:'networkidle' });
+  await p.goto(BASE + '/explore', { waitUntil:'networkidle' });
   const opts = [
     ['default', null],
     ['{keepH:true}', {keepH:true}],

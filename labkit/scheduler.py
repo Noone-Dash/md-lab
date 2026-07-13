@@ -28,10 +28,9 @@ from .engine import RUNS_DIR
 from .recipes import REGISTRY
 from .tracks import TRACKS
 
-ROOT = RUNS_DIR.parent.parent
-JOBS_DIR = RUNS_DIR.parent / "_jobs"
+from .config import REPO_ROOT as ROOT, JOBS_DIR
 VENV_PY = sys.executable
-GMX_ROOT = os.environ.get("GMX_ROOT", "/home/v_u/Documents/tools/opt/gromacs-2026.2")
+from . import config as _cfg
 TOTAL_CORES = psutil.cpu_count(logical=True) or 4
 TOTAL_RAM_GB = round(psutil.virtual_memory().total / 1e9)
 
@@ -245,8 +244,8 @@ class Scheduler:
         env = {
             "PATH": os.environ.get("PATH", ""),
             "HOME": os.environ.get("HOME", ""),
-            "GMX_ROOT": GMX_ROOT,
-            "CUDA_VISIBLE_DEVICES": "0" if job.needs_gpu else "",
+            **({"GMX_ROOT": os.environ["GMX_ROOT"]} if os.environ.get("GMX_ROOT") else {}),
+            "CUDA_VISIBLE_DEVICES": ("0" if (job.needs_gpu and _cfg.has_gpu()) else ""),
             "OMP_NUM_THREADS": str(cores),
             "GMX_MAXBACKUP": "-1",
         }

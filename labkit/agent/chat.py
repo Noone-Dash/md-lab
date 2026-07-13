@@ -19,9 +19,9 @@ import urllib.request
 
 from . import tools as T
 
-OLLAMA = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+from ..config import OLLAMA_HOST as OLLAMA, pick_model, CHAT_MODEL_PREF, TRANSLATE_MODEL_PREF
 # gpt-oss:20b is the one of the locally-pulled models that emits real tool_calls
-LOCAL_MODEL = os.environ.get("MDLAB_LOCAL_MODEL", "gpt-oss:20b")
+LOCAL_MODEL = pick_model(CHAT_MODEL_PREF) or "gpt-oss:20b"   # whatever is ACTUALLY pulled
 CLOUD_MODEL = os.environ.get("MDLAB_CLOUD_MODEL", "claude-sonnet-4-5")
 
 SYSTEM = """You are the resident computational chemist for a local molecular-dynamics lab \

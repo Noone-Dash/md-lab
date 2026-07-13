@@ -1,8 +1,9 @@
+const BASE = process.env.MDLAB_URL || 'http://127.0.0.1:5057';
 const { chromium } = require('playwright');
 (async () => {
   const b = await chromium.launch({ args:['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader'] });
   const p = await b.newPage();
-  await p.goto('http://127.0.0.1:5057/explore', { waitUntil:'networkidle' }); // gives us $3Dmol
+  await p.goto(BASE + '/explore', { waitUntil:'networkidle' }); // gives us $3Dmol
   const runs = {
     reaction: '/api/run/20260712_190819_451271_reaction_scan/traj',
     cell:     '/api/run/20260712_190840_850301_cell_rd/traj',

@@ -15,19 +15,33 @@ import os
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-GMX_TOP = Path(os.environ.get("GMX_ROOT", "/home/v_u/Documents/tools/opt/gromacs-2026.2")) / "share/gromacs/top"
+def _gmx_top():
+    """Locate GROMACS' share/top. A SILENT fallback here is dangerous: it would
+    generate an ontology advertising force fields this machine does not have."""
+    import sys as _s
+    _s.path.insert(0, str(HERE.parent.parent))
+    from labkit import config as _cfg
+    b = Path(_cfg.gmx_binary())               # .../bin/gmx
+    return b.parent.parent / "share/gromacs/top"
+
+
+GMX_TOP = _gmx_top()
 
 
 def installed_forcefields():
     if not GMX_TOP.exists():
-        return ["amber99sb-ildn"]
+        raise SystemExit(
+            f"Cannot read GROMACS force fields at {GMX_TOP}.\n"
+            f"The ontology must reflect what is ACTUALLY installed — refusing to "
+            f"guess.\nSet GMX_ROOT or `module load gromacs`, then re-run.")
     return sorted(p.name[:-3] for p in GMX_TOP.glob("*.ff"))
 
 
 def installed_water_models():
     ff = GMX_TOP / "amber99sb-ildn.ff"
     if not ff.exists():
-        return ["spce", "tip3p"]
+        raise SystemExit(f"No amber99sb-ildn.ff under {GMX_TOP} — cannot enumerate "
+                         f"water models. Refusing to guess.")
     return sorted(p.stem for p in ff.glob("*.itp")
                   if p.stem in {"spce", "spc", "tip3p", "tip4p", "tip5p", "tip4pew"})
 

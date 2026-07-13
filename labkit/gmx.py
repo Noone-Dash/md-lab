@@ -12,9 +12,7 @@ import shlex
 import subprocess
 from pathlib import Path
 
-# Discovered during setup; override with the GMX_ROOT env var if you relocate it.
-GMX_ROOT = os.environ.get("GMX_ROOT", "/home/v_u/Documents/tools/opt/gromacs-2026.2")
-GMXRC = os.path.join(GMX_ROOT, "bin", "GMXRC")
+from . import config as _cfg   # the ONE place the environment is resolved
 
 
 class GmxError(RuntimeError):
@@ -30,15 +28,25 @@ class GmxError(RuntimeError):
 
 
 def _shell(cmdline: str, cwd, log_path=None, stdin_text=None, timeout=None):
-    """Run *cmdline* under a shell with GMXRC sourced, streaming to a log file."""
-    full = f"source {shlex.quote(GMXRC)} >/dev/null 2>&1 && {cmdline}"
+    """Run *cmdline* under a shell, streaming to a log file.
+
+    GMXRC is sourced only if we actually have one (a source/prefix install). When gmx
+    came from PATH (`module load gromacs`) there is nothing to source. We use `bash -c`,
+    NOT `bash -lc`: a login shell re-reads the user's profile, which on a cluster can
+    reset PATH, unload modules, or emit banners into our parsed output.
+    """
+    info = _cfg.find_gromacs()
+    if info["gmxrc"]:
+        full = f"source {shlex.quote(info['gmxrc'])} >/dev/null 2>&1 && {cmdline}"
+    else:
+        full = cmdline
     log_f = open(log_path, "a") if log_path else None
     try:
         if log_f:
             log_f.write(f"\n$ {cmdline}\n")
             log_f.flush()
         proc = subprocess.run(
-            ["bash", "-lc", full],
+            ["bash", "-c", full],
             cwd=str(cwd),
             input=stdin_text,
             text=True,
@@ -64,7 +72,9 @@ def gmx(args, cwd, log_path=None, stdin_text=None, timeout=None, check=True):
     """
     argv = [str(a) for a in args]
     # GROMACS defaults to prompting before overwriting; -quiet+backups off keeps runs clean.
-    cmdline = "gmx -quiet -nobackup " + " ".join(shlex.quote(a) for a in argv)
+    gmx_bin = _cfg.gmx_binary()          # discovered: $GMX_ROOT, PATH, or a known prefix
+    cmdline = (shlex.quote(gmx_bin) + " -quiet -nobackup "
+               + " ".join(shlex.quote(a) for a in argv))
     rc, out = _shell(cmdline, cwd, log_path=log_path, stdin_text=stdin_text, timeout=timeout)
     if check and rc != 0:
         tail = "\n".join(out.splitlines()[-40:])
