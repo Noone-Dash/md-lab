@@ -102,10 +102,51 @@ The gas test initially *failed* (2.19). The simulation was right; the **metric**
 it was taking the max of a noisy 624-bin histogram and grabbing a single-bin spike. Fixed
 the metric, not the threshold. That is what the suite is for.
 
-**Known deficiency:** these are point estimates with **no error bars**. For a
-time-correlated series, `Var(mean) = σ²/N · (2τ_int/Δt)`, so the naive SEM is too small by
-`√(2τ_int/Δt)` — often 3–10×. Block averaging + equilibration detection is **not yet
-implemented**, so "agrees with experiment" is currently not a defensible claim.
+### Error bars (`labkit/uncertainty.py`)
+
+These were point estimates. They no longer are.
+
+For a correlated series, `Var(x̄)` is a double sum over **all sample pairs**, not a single
+sum, which gives `SEM = σ·√(2·τ_int/N)` and an effective sample size `N_eff = N/(2·τ_int)`.
+The textbook `σ/√N` assumes independent samples; consecutive MD frames are not, and it is
+too small by `√(2·τ_int)` — 3–10× in practice.
+
+`τ_int` is estimated **two independent ways** (Sokal automatic windowing; Flyvbjerg–
+Petersen blocking) and cross-checked, because an estimator you have not checked against
+another one is an assumption. Both are validated against an **AR(1) process whose τ_int is
+known in closed form**, `τ = (1+φ)/(2(1−φ))` — ground truth, not a plausibility check:
+
+| φ | τ_true | τ_estimated | error | naive SEM is too small by |
+|---|---|---|---|---|
+| 0.00 | 0.50 | 0.50 | 0.6% | 1.0× |
+| 0.80 | 4.50 | 4.46 | 0.8% | 3.0× |
+| 0.95 | 19.50 | 20.23 | 3.8% | 6.4× |
+
+**The sampling bug this exposed.** `nstenergy` was derived from `TARGET_FRAMES` — the
+*viewer's* frame budget. The rate at which we sampled thermodynamics was set by what makes
+a 3D animation look smooth: ~120 samples, ~10 ps apart. That is coarser than the
+correlation time of the observables, so `τ_int` was **unmeasurable** (it pinned to its
+0.5-sample floor) and every error bar was silently unfalsifiable. Energy frames are ~100
+bytes; trajectory frames are all-atom coordinates. They now have separate budgets.
+
+Sampled properly (TIP3P, 3 nm box, NPT 300 K, 0.1 ps), the measured correlation times
+reproduce the coupling constants set in the `.mdp`:
+
+| observable | measured τ_int | `.mdp` coupling constant |
+|---|---|---|
+| Temperature | 0.10 ps | `tau-t = 0.1` |
+| Density | 2.19 ps | `tau-p = 2.0` |
+| Pressure | 0.09 ps | (instantaneous virial — fast, as expected) |
+
+The density autocorrelation time **is** the barostat coupling time. Nothing was fitted.
+That correspondence is what makes the machinery trustworthy rather than decorative.
+
+Consequences: the eval runner reports a 95% CI and returns **INCONCLUSIVE** — not PASS —
+when the CI straddles the acceptance boundary. A PASS whose error bar also covers FAIL is
+not a pass; it is a run too short to decide. And `time_for_precision()` inverts the
+relation: water density to ±1.0 kg/m³ needs 0.33 ns; to ±0.1 kg/m³ needs 33 ns. Cost goes
+as `1/SEM²`, so a 10× tighter bar costs 100× the compute — "just run it longer" stops
+working fast.
 
 ---
 
@@ -117,6 +158,8 @@ labkit/
   agent/         intent (deterministic contract) · translate (constrained LLM) · tools · chat
   evals/         physics benchmarks · agent benchmark · hardware benchmark · metrics
   data/          ontology.json (150 params) · rules.json (26 rules) · benchmarks.json
+  uncertainty.py τ_int (Sokal + blocking), N_eff, honest SEM, time-to-precision
+  config.py      the ONE place the environment is resolved — no path is hardcoded anywhere else
   scheduler.py   single-node queue: systemd + cgroups v2, GPU serialisation, pause/resume
   engine.py      run pipeline → uniform run.json manifest
 viewer/          Flask UI: plan builder · 3D viewer · monitor · evals · chat
@@ -127,21 +170,32 @@ tests/           regression tests pinning every bug that actually happened
 ## Running it
 
 ```bash
-source env.sh                       # GROMACS + venv
+python -m labkit.doctor             # preflight: what is present, what is missing, how to fix it
 python viewer/app.py 5057           # UI
 
 python -m labkit.evals.runner       # physics benchmarks (real simulations)
 python -m labkit.evals.hw_bench     # measure ns/day on this machine
+python -m labkit.uncertainty        # validate the error-bar estimators against AR(1)
 python tests/test_plan.py           # regression tests
+python tests/test_no_hardcoding.py  # no machine-specific constants anywhere but config.py
 ```
+
+**Portability.** Nothing is hardcoded to the machine it was written on. GROMACS is
+discovered via `$GMX_ROOT` → `gmx` on `PATH` (the `module load` case) → conventional
+prefixes → a **loud, actionable failure**, never a silent fallback. Thread counts come from
+the cpuset you were actually given (`SLURM_CPUS_PER_TASK`), memory limits from
+`SLURM_MEM_PER_NODE` or the cgroup, and `-ntmpi` is emitted **only** for thread-MPI builds
+(it aborts a library-MPI `gmx_mpi`). `tests/test_no_hardcoding.py` greps the tree so this
+bug class cannot come back.
 
 The chat/translator runs **locally** via Ollama (no API key). Setup, however, does not
 depend on it: the plan pipeline is deterministic with or without a model.
 
 ## Not done (stated explicitly)
 
-- **Uncertainty quantification** — block averaging, τ_int, equilibration detection. Until
-  this lands, every reported mean is a point estimate.
+- **Automatic equilibration detection.** τ_int and error bars now exist, but the
+  discarded-transient fraction is still a fixed `last_frac`, not detected per-run
+  (Chodera's marginal-`N_eff` criterion).
 - **Ligand/small-molecule parameterization** (GAFF/OpenFF). Without it, drug-discovery
   workflows are blocked: you cannot simulate an arbitrary compound. Biggest functional gap.
 - Cofactors: `4HHB` fails — amber99sb-ildn has no haem parameters.
