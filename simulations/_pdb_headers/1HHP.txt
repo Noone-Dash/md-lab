@@ -1,0 +1,1 @@
+the three-dimensional structure of the aspartyl protease from the hiv- 1 isolate bru mol_id: 1; molecule: unliganded hiv-1 protease; chain: a; engineered: yes

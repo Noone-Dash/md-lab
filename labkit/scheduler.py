@@ -31,7 +31,7 @@ from .tracks import TRACKS
 from .config import REPO_ROOT as ROOT, JOBS_DIR
 VENV_PY = sys.executable
 from . import config as _cfg
-TOTAL_CORES = psutil.cpu_count(logical=True) or 4
+TOTAL_CORES = _cfg.allowed_cores()      # the cpuset we are in, not the whole node
 TOTAL_RAM_GB = round(psutil.virtual_memory().total / 1e9)
 
 
@@ -70,10 +70,12 @@ HAVE_SYSTEMD = _systemd_ok()
 
 @dataclass
 class Budget:
-    max_concurrent: int = 2         # total jobs running at once
-    max_gpu_jobs: int = 1           # GPU jobs at once (serialise the GPU)
-    cores_per_job: int = 6          # CPU cores each job may use
-    mem_per_job_gb: int = 24        # hard memory cap per job
+    """Defaults come from what this box/allocation ACTUALLY has (config.default_budget),
+    never from constants baked in on the developer's machine."""
+    max_concurrent: int = field(default_factory=lambda: _cfg.default_budget()["max_concurrent"])
+    max_gpu_jobs: int = field(default_factory=lambda: _cfg.default_budget()["max_gpu_jobs"])
+    cores_per_job: int = field(default_factory=lambda: _cfg.default_budget()["cores_per_job"])
+    mem_per_job_gb: int = field(default_factory=lambda: _cfg.default_budget()["mem_per_job_gb"])
 
 
 @dataclass

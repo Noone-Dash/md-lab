@@ -1,0 +1,1 @@
+x-ray structure of enhanced green fluorescent protein (egfp) mol_id: 1; molecule: green fluorescent protein; chain: a; engineered: yes; mutation: yes; other_details: chromophore resulting from autocatalytic cyclization of consecutive amino acid residues thr65, tyr66 and gly67.

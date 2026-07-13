@@ -37,6 +37,56 @@ from labkit.config import DATA_DIR                        # noqa: E402
 from labkit.plan import Plan, validate                    # noqa: E402
 
 RESULTS = DATA_DIR / "translate_bench.json"
+_HDR_CACHE = DATA_DIR / "_pdb_headers"
+
+
+def pdb_title(pdb_id: str) -> str | None:
+    """The REAL title of a PDB entry, from the PDB. None if it does not exist/offline."""
+    pdb_id = str(pdb_id).strip().upper()
+    if len(pdb_id) != 4:
+        return None
+    _HDR_CACHE.mkdir(parents=True, exist_ok=True)
+    cached = _HDR_CACHE / f"{pdb_id}.txt"
+    if cached.exists():
+        return cached.read_text()
+    import urllib.error
+    import urllib.request
+    try:
+        with urllib.request.urlopen(
+                f"https://files.rcsb.org/header/{pdb_id}.pdb", timeout=20) as r:
+            head = r.read().decode("utf8", "replace")
+    except urllib.error.HTTPError:
+        cached.write_text("")          # 404 => the model invented an ID that does not exist
+        return ""
+    except Exception:  # noqa: BLE001
+        return None                    # offline: unknown, NOT a failure — never cache this
+    txt = " ".join(l[10:].strip() for l in head.splitlines()
+                   if l.startswith(("TITLE", "COMPND"))).lower()
+    cached.write_text(txt)
+    return txt
+
+
+class IsProtein:
+    """Grades a PDB ID by what it ACTUALLY IS, not by whether it equals my guess.
+
+    HIV-1 protease is 1HVR *and* 1HHP *and* 3HVP. Marking a model wrong for choosing a
+    different valid structure of the requested protein would measure agreement with my
+    arbitrary pick, not correctness. So: resolve the ID against the PDB and check the
+    entry's own title. An ID that 404s is wrong (the model hallucinated an entry); an
+    ID whose title does not mention the protein is wrong (right format, wrong molecule).
+    """
+
+    def __init__(self, *keywords):
+        self.keywords = [k.lower() for k in keywords]
+
+    def __call__(self, got) -> bool:
+        title = pdb_title(got)
+        if title is None:
+            raise RuntimeError("PDB unreachable — cannot grade this case offline")
+        return any(k in title for k in self.keywords)
+
+    def __str__(self):
+        return f"a real PDB entry for {self.keywords[0]}"
 
 
 def _get(plan, path, default=None):
@@ -101,17 +151,40 @@ CASES = [
       "salt": (lambda p: _get(p, "system.salt_conc_M"), 0.0, 0.001),
       "temp": (_prod_temp, 300.0, 1.0)}, True),
 
-    # --- the intent contract does NOT parse an explicit box size / padding ---
+    # box geometry / water model / timestep used to be uncovered — the model got them
+    # right and enforce() overwrote them with defaults. They are COVERED now; these
+    # cases stay in as the regression that proves it.
     ("A 4 nm box of SPC/E water at 350 K, constant volume, 30 ps",
      {"kind": (lambda p: _get(p, "system.kind"), "solvent", None),
-      "box": (lambda p: _get(p, "system.box_size_nm"), 4.0, 0.01),   # UNCOVERED
+      "box": (lambda p: _get(p, "system.box_size_nm"), 4.0, 0.01),
+      "water": (lambda p: _get(p, "system.water_model"), "spce", None),
       "temp": (_prod_temp, 350.0, 1.0),
       "ens": (lambda p: (p["stages"][-1].get("params") or {}).get("ensemble"), "NVT", None)},
-     False),
+     True),
 
     ("Lysozyme at 300 K for 50 ps, use 2.0 nm of padding around the protein",
      {"pdb": (lambda p: _get(p, "system.pdb_id"), "1AKI", None),
-      "pad": (lambda p: _get(p, "system.box_padding_nm"), 2.0, 0.01),  # UNCOVERED
+      "pad": (lambda p: _get(p, "system.box_padding_nm"), 2.0, 0.01),
+      "temp": (_prod_temp, 300.0, 1.0)}, True),
+
+    # ---------------------------------------------------------------------------
+    # GENUINELY UNCOVERED. The lookup table holds 18 molecules. Ask for one that is
+    # NOT in it and the PDB ID can come from exactly one place: the model's own
+    # knowledge. There is no deterministic layer to fall back on, so THIS is where a
+    # bigger model can actually pay for itself — and the only place it can.
+    # ---------------------------------------------------------------------------
+    ("Simulate GFP, the green fluorescent protein, at 300 K for 100 ps",
+     {"pdb": (lambda p: _get(p, "system.pdb_id"), IsProtein("fluorescent protein"), None),
+      "temp": (_prod_temp, 300.0, 1.0)}, False),
+
+    ("Run HIV-1 protease at 310 K in physiological salt for 50 ps",
+     {"pdb": (lambda p: _get(p, "system.pdb_id"), IsProtein("hiv-1 protease", "hiv protease",
+                                                            "hiv-1 proteinase"), None),
+      "salt": (lambda p: _get(p, "system.salt_conc_M"), 0.15, 0.02),
+      "temp": (_prod_temp, 310.0, 1.0)}, False),
+
+    ("Simulate the alpha-amylase inhibitor tendamistat at 300 K for 50 ps",
+     {"pdb": (lambda p: _get(p, "system.pdb_id"), IsProtein("tendamistat"), None),
       "temp": (_prod_temp, 300.0, 1.0)}, False),
 ]
 
@@ -138,7 +211,9 @@ def _grade(plan, checks):
         if got is None:
             fails.append(f"{name}=missing")
             continue
-        if tol is None:
+        if isinstance(expected, IsProtein):        # grounded: ask the PDB, not a table
+            good = expected(got)
+        elif tol is None:
             good = str(got).lower() == str(expected).lower()
         else:
             try:

@@ -1,0 +1,1 @@
+the structure of the orthorhombic form of hen egg-white lysozyme at 1.5 angstroms resolution mol_id: 1; molecule: lysozyme; chain: a; ec: 3.2.1.17

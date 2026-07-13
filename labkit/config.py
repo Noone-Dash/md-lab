@@ -150,6 +150,32 @@ def allowed_cores() -> int:
         return max(1, min(os.cpu_count() or 1, 64))
 
 
+def allowed_mem_gb() -> float:
+    """Memory we are actually allowed to use — NOT the memory the node happens to have.
+
+    Inside a Slurm allocation or a cgroup, the node's physical RAM is a fiction: touch
+    more than the limit and the OOM killer takes the job with no diagnostic. Order:
+    Slurm's own accounting -> the cgroup v2 limit -> physical RAM.
+    """
+    per_node = os.environ.get("SLURM_MEM_PER_NODE")          # MB
+    if per_node and per_node.isdigit():
+        return int(per_node) / 1024.0
+    per_cpu = os.environ.get("SLURM_MEM_PER_CPU")            # MB
+    if per_cpu and per_cpu.isdigit():
+        return int(per_cpu) * allowed_cores() / 1024.0
+    try:                                                     # cgroup v2
+        v = Path("/sys/fs/cgroup/memory.max").read_text().strip()
+        if v != "max":
+            return int(v) / 1024**3
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import psutil
+        return psutil.virtual_memory().total / 1024**3
+    except Exception:  # noqa: BLE001
+        return 8.0
+
+
 def child_env(**overrides) -> dict:
     """Environment for a child process.
 
@@ -167,6 +193,22 @@ def child_env(**overrides) -> dict:
         else:
             env[k] = str(v)
     return env
+
+
+def default_budget() -> dict:
+    """Compute budget derived from the ALLOCATION, not from constants.
+
+    6 cores / 24 GB was hardcoded. On a 4-core cluster allocation that oversubscribes
+    and thrashes; on a 72-core node it wastes most of the machine. Both are wrong.
+    """
+    cores, mem = allowed_cores(), allowed_mem_gb()
+    conc = 1 if cores <= 4 else 2
+    return {
+        "max_concurrent": conc,
+        "max_gpu_jobs": 1 if has_gpu() else 0,
+        "cores_per_job": max(1, (cores - 1) // conc),
+        "mem_per_job_gb": max(2, int(mem * 0.8 / conc)),
+    }
 
 
 def gmx_binary() -> str:

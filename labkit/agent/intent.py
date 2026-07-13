@@ -56,6 +56,7 @@ class Intent:
     equilibrate: bool = None
     forcefield: str = None
     box_padding_nm: float = None
+    dt_ps: float = None
     box_size_nm: float = None
     water_model: str = None
     uncovered: list = field(default_factory=list)   # phrases we did NOT understand
@@ -148,6 +149,15 @@ def extract(nl: str) -> Intent:
         elif "amber" in t:
             it.forcefield = "amber99sb-ildn"
 
+    # ---- timestep ----------------------------------------------------------- #
+    m = re.search(r"(\d+(?:\.\d+)?)\s*fs\s*(?:time\s*step|timestep|step)", t)
+    if m:
+        it.dt_ps = float(m.group(1)) / 1000.0
+    else:
+        m = re.search(r"(?:time\s*step|timestep)\s*(?:of\s+)?(\d+(?:\.\d+)?)\s*fs", t)
+        if m:
+            it.dt_ps = float(m.group(1)) / 1000.0
+
     # ---- box geometry ------------------------------------------------------ #
     # These were UNCOVERED, so an explicit request ("use 2.0 nm of padding") was
     # silently overwritten by the deterministic default. Coverage IS the fix.
@@ -227,6 +237,13 @@ def verify(plan: dict, it: Intent) -> list:
         v.append(f"box: asked for {it.box_size_nm} nm, plan says {s.get('box_size_nm')}")
     if it.water_model and s.get("water_model") != it.water_model:
         v.append(f"water: asked for {it.water_model}, plan says {s.get('water_model')}")
+    if it.dt_ps is not None:
+        for st in stages:
+            if st.get("type") == "dynamics":
+                got = (st.get("params") or {}).get("dt")
+                if got is None or abs(float(got) - it.dt_ps) > 1e-6:
+                    v.append(f"dt: asked for {it.dt_ps} ps, plan says {got}")
+                break
     return v
 
 
@@ -252,6 +269,10 @@ def enforce(plan: dict, it: Intent) -> dict:
         s["box_size_nm"] = it.box_size_nm
     if it.water_model:
         s["water_model"] = it.water_model
+    if it.dt_ps is not None:
+        for st in plan.get("stages") or []:
+            if st.get("type") == "dynamics":
+                st.setdefault("params", {})["dt"] = it.dt_ps
 
     # protocol: if the user asked for equilibration, the SHAPE is a deterministic
     # template, not something the model improvises.

@@ -1,0 +1,1 @@
+rational design of potent, bioavailable, nonpeptide cyclic ureas as hiv protease inhibitors mol_id: 1; molecule: hiv-1 protease; chain: a, b; engineered: yes

@@ -1,0 +1,1 @@
+conserved folding in retroviral proteases. crystal structure of a synthetic hiv-1 protease mol_id: 1; molecule: unliganded hiv-1 protease; chain: a; engineered: yes

@@ -1,0 +1,1 @@
+green fluorescent protein from aequorea victoria mol_id: 1; molecule: green fluorescent protein; chain: a; engineered: yes; mutation: yes; other_details: the protein contains six se-methionines. of these, the n-terminal met and met 233 are not present in the entry

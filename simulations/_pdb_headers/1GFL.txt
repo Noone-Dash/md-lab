@@ -1,0 +1,1 @@
+structure of green fluorescent protein mol_id: 1; molecule: green fluorescent protein; chain: a, b; engineered: yes; mutation: yes
