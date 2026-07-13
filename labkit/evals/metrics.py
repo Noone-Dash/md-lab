@@ -27,6 +27,29 @@ def energy_mean(manifest, term, last_frac=0.5, **_):
     return sum(tail) / len(tail)
 
 
+def uncertainty(manifest, spec: dict) -> dict | None:
+    """The error bar that belongs on whatever extract() returned.
+
+    A mean with no error bar cannot be compared to a reference value: you cannot say
+    whether a 13 kg/m3 gap is a broken force field or a short run. This attaches
+    tau_int, N_eff and a 95% CI to the mean the benchmark is graded on.
+    """
+    if spec.get("type") not in ("energy_mean", "analysis_final"):
+        return None                     # rdf peaks / QM energies are not time averages
+    key = "term" if spec.get("type") == "energy_mean" else "name"
+    x, y = _series(manifest, spec.get(key))
+    if not y or len(y) < 16:
+        return None
+    frac = spec.get("last_frac", 0.5 if spec["type"] == "energy_mean" else 0.25)
+    k = max(1, int(len(y) * frac))
+    dt = (x[1] - x[0]) if x and len(x) > 1 else None
+    from ..uncertainty import stats
+    s = stats(y[-k:], dt_ps=dt)
+    return {kk: s[kk] for kk in
+            ("mean", "sem", "sem_naive", "inflation", "tau_int", "tau_int_ps",
+             "n", "n_eff", "ci95", "sd", "estimators_agree") if kk in s}
+
+
 def analysis_final(manifest, name, last_frac=0.25, **_):
     x, y = _series(manifest, name)
     if not y:

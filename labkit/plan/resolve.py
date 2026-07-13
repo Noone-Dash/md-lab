@@ -10,6 +10,8 @@ from __future__ import annotations
 from .schema import Plan, Stage
 
 TARGET_FRAMES = 100          # trajectory frames we aim to write per dynamics stage
+MAX_ENERGY_FRAMES = 100_000   # ~10 MB of .edr even for a microsecond run, and
+#                               enough samples that tau_int is actually resolvable.
 
 
 def regime(system) -> str:
@@ -143,11 +145,22 @@ def resolve(plan: Plan) -> dict:
             else:
                 p.pop("gen-seed", None)
 
-            # output frequencies derived from a target frame count
+            # TRAJECTORY frames: budgeted, because each one is all-atom coordinates.
+            # This number exists to make the viewer smooth.
             nst = max(100, nsteps // TARGET_FRAMES) if nsteps else 100
             mdp["nstxout-compressed"] = int(p.pop("nstxout-compressed", nst))
             mdp["compressed-x-precision"] = 1000
-            mdp["nstenergy"] = int(p.pop("nstenergy", nst))
+
+            # ENERGY frames: a DIFFERENT budget, because they are ~100 bytes each and
+            # they are what every reported mean is computed from. Tying nstenergy to
+            # the viewer's frame count (which is what this used to do) meant we sampled
+            # thermodynamics ~120 times per run, at intervals of ~10 ps — far coarser
+            # than the correlation time of the observables. tau_int was then
+            # unmeasurable (it pinned to its floor of 0.5) and every error bar was
+            # unfalsifiable. Sampling density must be set by the statistics, not by the
+            # animation.
+            nste = max(50, nsteps // MAX_ENERGY_FRAMES) if nsteps else 50
+            mdp["nstenergy"] = int(p.pop("nstenergy", nste))
             mdp["nstlog"] = int(p.pop("nstlog", nst))
 
         # position restraints -> the -DPOSRES define + refcoord scaling

@@ -1,0 +1,1 @@
+ompf porin (mutant r42c) mol_id: 1; molecule: matrix porin outer membrane protein f; chain: a; synonym: matrix porin, ompf porin; engineered: yes; mutation: yes

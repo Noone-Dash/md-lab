@@ -16,7 +16,7 @@ from ..config import DATA_DIR as _DATA
 RESULTS = _DATA / "eval_results.json"
 BENCH = json.loads((HERE / "benchmarks.json").read_text())["benchmarks"]
 
-from .metrics import extract           # noqa: E402
+from .metrics import extract, uncertainty           # noqa: E402
 
 
 def _run_one(b, progress=None):
@@ -45,7 +45,18 @@ def _run_one(b, progress=None):
     else:
         verdict = "FAIL"
 
-    return {
+    # The error bar on the measurement, where the measurement IS a time average.
+    # A PASS with an error bar so wide it also covers FAIL is not a PASS, it is a run
+    # too short to decide — and it must say so rather than reporting a bare number.
+    unc = uncertainty(m, b["metric"])
+    if unc and verdict in ("PASS", "FAIL"):
+        lo, hi = unc["ci95"]
+        inside = exp["min"] <= lo and hi <= exp["max"]
+        outside = hi < exp["min"] or lo > exp["max"]
+        if not (inside or outside):
+            verdict = "INCONCLUSIVE"       # the CI straddles the acceptance boundary
+
+    res = {
         "id": b["id"], "title": b["title"], "why": b["why"],
         "status": verdict,
         "measured": None if value is None else round(float(value), 4),
@@ -55,6 +66,12 @@ def _run_one(b, progress=None):
         "seconds": round(secs, 1),
         "run_id": m["id"],
     }
+    if unc:
+        res["uncertainty"] = {k: (round(v, 4) if isinstance(v, float) else v)
+                              for k, v in unc.items() if k != "ci95"}
+        res["ci95"] = [round(unc["ci95"][0], 4), round(unc["ci95"][1], 4)]
+        res["sem"] = round(unc["sem"], 4)
+    return res
 
 
 def run(ids=None, progress=None):
