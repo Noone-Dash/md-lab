@@ -45,15 +45,20 @@ def padding_for(rcoulomb_nm: float = 1.0) -> float:
     return round(float(rcoulomb_nm) + CUTOFF_MARGIN_NM, 2)
 
 
-def system_provenance(system: dict, intent=None) -> dict:
-    """Where each SYSTEM field came from. Stage params had provenance; these did not."""
+def system_provenance(raw_system: dict, intent=None) -> dict:
+    """Where each SYSTEM field came from.
+
+    `raw_system` must be the model's OWN output, snapshotted BEFORE defaults are applied.
+    Reading it afterwards reported "model" for fields the model never set -- including when
+    there was no model at all. A provenance tag that lies is worse than no tag.
+    """
     prov = {}
     for f, iattr in (("forcefield", "forcefield"), ("water_model", "water_model"),
                      ("box_size_nm", "box_size_nm"), ("box_padding_nm", "box_padding_nm"),
                      ("salt_conc_M", "salt_M"), ("pdb_id", "pdb_id")):
         if getattr(intent, iattr, None) is not None:
             prov[f] = "intent"
-        elif system.get(f) is not None:
+        elif (raw_system or {}).get(f) is not None:
             prov[f] = "model"
         else:
             prov[f] = "default"

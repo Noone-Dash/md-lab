@@ -353,6 +353,7 @@ def verify(plan: dict, it: Intent) -> list:
 
 
 def enforce(plan: dict, it: Intent, request: str = "") -> dict:
+    raw_system = dict((plan or {}).get("system") or {})   # BEFORE we touch anything
     """OVERWRITE the plan so it satisfies the contract. The model does not get a vote."""
     from ..plan.defaults import complete_system
     p = json.loads(json.dumps(plan))     # deep copy
@@ -423,7 +424,9 @@ def enforce(plan: dict, it: Intent, request: str = "") -> dict:
     # EVERY stage parameter is now (intent -> default), never the model's. Measured: on
     # a bare request the model used to control 12 of 36 mdp keys, dt=10 fs among them.
     from ..plan.defaults import complete_stages, system_provenance
-    sysprov = system_provenance(p.get("system") or {}, it)
+    # Snapshot what the MODEL actually emitted, BEFORE any default is applied. Computing
+    # provenance afterwards cannot distinguish a model value from a filled-in default.
+    sysprov = system_provenance(raw_system, it)
     complete_stages(p, it, request=request or it.raw_request or "")
     p.setdefault("_provenance", {}).update(sysprov)
 

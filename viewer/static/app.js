@@ -145,7 +145,7 @@ async function pollRun() {
   fetch("/api/run/" + CURRENT + "/log").then(r => r.text()).then(t => {
     const log = $("#log"); log.textContent = t; log.scrollTop = log.scrollHeight;
   });
-  if (m.status === "done" || m.status === "error") {
+  if (m.status === "done" || m.status === "error" || m.status === "interrupted") {
     clearInterval(POLL); POLL = null;
     refreshRuns();
   }

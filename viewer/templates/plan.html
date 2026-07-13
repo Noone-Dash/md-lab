@@ -24,7 +24,21 @@
 
   <main class="planpage">
     <aside class="plan-side">
-      <h2>Start from an example</h2>
+      <h2>Describe it in English</h2>
+      <p class="muted" style="font-size:12px">The contract parses what it can; the model
+        only reads what the contract cannot. Every value below is tagged with where it
+        came from.</p>
+      <input type="text" id="nl-input" class="onto-input"
+             placeholder="e.g. lysozyme at body temperature in physiological salt, 50 ps">
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+        <button id="nl-go" class="jbtn">Build plan</button>
+        <label class="muted" style="font-size:12px;display:flex;gap:4px;align-items:center">
+          <input type="checkbox" id="nl-llm" checked> use the LLM
+        </label>
+      </div>
+      <div id="nl-out"></div>
+
+      <h2 style="margin-top:22px">Start from an example</h2>
       <div id="examples" class="plan-examples"></div>
 
       <h2 style="margin-top:22px">What you can set</h2>

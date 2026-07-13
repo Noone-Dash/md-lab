@@ -199,6 +199,42 @@ def api_ontology():
         search=request.args.get("search")))
 
 
+@app.route("/api/plan/from_request", methods=["POST"])
+def plan_from_request_api():
+    """English -> Plan, with PROVENANCE. The whole pipeline behind one call.
+
+    The response says, for every physical value, WHERE IT CAME FROM (intent | model |
+    default | derived). Until now that existed only in JSON nobody looked at, which made
+    "the LLM chose your temperature" an invisible fact. It is not invisible any more.
+    """
+    from labkit.agent.intent import plan_from_request
+    body = request.get_json(force=True)
+    req = (body.get("request") or "").strip()
+    if not req:
+        abort(400, "request required")
+    r = plan_from_request(req, model=body.get("model"),
+                          use_llm=bool(body.get("use_llm", True)))
+    if not r.get("plan"):
+        # A refusal is a RESULT, not a failure. "could not identify the protein" is the
+        # honest answer to "simulate the enzyme that unwinds DNA" — far better than
+        # silently simulating something else.
+        return jsonify({"ok": False, "refused": True, "error": r.get("error"),
+                        "intent": r.get("intent")}), 200
+    from labkit.plan import Plan, validate as _validate
+    v = _validate(Plan.from_dict(r["plan"]))
+    return jsonify({
+        "ok": True,
+        "plan": r["plan"],
+        "provenance": r["plan"].get("_provenance", {}),
+        "intent": r.get("intent"),
+        "violations": r.get("violations"),
+        "structure_source": r.get("structure_source"),
+        "structure_title": r.get("structure_title"),
+        "used_llm": r.get("used_llm"),
+        "validation": v,
+    })
+
+
 @app.route("/api/plan/validate", methods=["POST"])
 def api_plan_validate():
     body = request.get_json(force=True) or {}

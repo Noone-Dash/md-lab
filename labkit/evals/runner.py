@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -17,6 +18,20 @@ RESULTS = _DATA / "eval_results.json"
 BENCH = json.loads((HERE / "benchmarks.json").read_text())["benchmarks"]
 
 from .metrics import extract, uncertainty           # noqa: E402
+
+
+def _json_safe(o):
+    """NaN/Infinity are valid in Python and INVALID in JSON. json.dumps writes them anyway,
+    and every JSON.parse() in the browser then throws -- the evals page went blank the
+    moment stats() started returning sem = nan for an unresolvable run. A refusal must
+    serialise as null."""
+    if isinstance(o, dict):
+        return {k: _json_safe(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_json_safe(v) for v in o]
+    if isinstance(o, float) and not math.isfinite(o):
+        return None
+    return o
 
 
 def _run_one(b, progress=None):
@@ -101,14 +116,17 @@ def run(ids=None, progress=None):
         "errored": sum(1 for r in out if r["status"] in ("ERROR", "NO DATA")),
         "results": out,
     }
-    RESULTS.write_text(json.dumps(summary, indent=2))
+    summary = _json_safe(summary)
+    RESULTS.write_text(json.dumps(summary, indent=2, allow_nan=False))
     return summary
 
 
 def load_last():
+    """Sanitised on the way OUT too: a results file written before the NaN fix still holds
+    NaN, and Python will happily parse it back and hand it to jsonify, which re-emits it."""
     if RESULTS.exists():
         try:
-            return json.loads(RESULTS.read_text())
+            return _json_safe(json.loads(RESULTS.read_text()))
         except Exception:  # noqa: BLE001
             pass
     return None

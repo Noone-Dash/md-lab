@@ -118,6 +118,9 @@ h3 { font-size: 14px; margin: 4px 0 6px; }
 .status.preparing, .status.running, .status.analysing { background: rgba(79,157,255,.12); color: var(--accent); }
 .status.done { background: rgba(51,217,166,.12); color: var(--ok); }
 .status.error { background: rgba(255,107,107,.12); color: var(--err); }
+/* a run whose process died. It must NOT look like it is still working. */
+.status.interrupted { background: rgba(255,193,7,.12); color: var(--warn); }
+.status.preempted   { background: rgba(255,193,7,.12); color: var(--warn); }
 .status.queued { background: rgba(133,147,166,.14); color: var(--muted); }
 .status.paused { background: rgba(255,180,84,.14); color: var(--warn); }
 .status.killed { background: rgba(255,107,107,.10); color: var(--err); }
@@ -427,3 +430,40 @@ h3 { font-size: 14px; margin: 4px 0 6px; }
 .e-nums span { color: var(--muted); }
 .e-nums b { color: var(--accent2); font-variant-numeric: tabular-nums; }
 .e-detail { font-size: 11px; color: var(--err); margin-top: 6px; }
+
+/* ---- error bars, correlation times, and honest caveats on the evals page ---- */
+.e-nums .pm { color: var(--muted); font-weight: 600; }
+.e-nums .nobar { color: var(--muted); font-weight: 400; font-size: .82em; }
+.e-stats {
+  display: flex; flex-wrap: wrap; gap: .5rem .75rem;
+  margin-top: .55rem; padding-top: .55rem;
+  border-top: 1px solid rgba(255,255,255,.07);
+  font-size: .8rem; color: var(--muted);
+}
+.e-stats i { font-style: normal; color: var(--muted); opacity: .8; }
+.e-stats .sep { margin: 0 .35rem; opacity: .35; }
+.e-caveat {
+  margin-top: .5rem; padding: .45rem .6rem;
+  background: rgba(255,193,7,.08);
+  border-left: 2px solid var(--warn);
+  border-radius: 3px;
+  font-size: .82rem; color: var(--warn);
+}
+
+/* ---- provenance: WHERE each physical value came from ---- */
+.prov { display: inline-block; margin-left: .4rem; padding: .05rem .35rem;
+        border-radius: 3px; font-size: .68rem; font-weight: 600;
+        text-transform: uppercase; letter-spacing: .03em; vertical-align: middle; }
+.prov-intent  { background: rgba(51,217,166,.16); color: var(--ok); }
+.prov-derived { background: rgba(120,160,255,.16); color: #8fb0ff; }
+.prov-default { background: rgba(255,255,255,.08); color: var(--muted); }
+.prov-model   { background: rgba(255,193,7,.16);  color: var(--warn); }
+.prov-rcsb, .prov-curated, .prov-rcsb-via-model-name { background: rgba(51,217,166,.16); color: var(--ok); }
+
+.prov-key {
+  display: flex; flex-wrap: wrap; gap: .75rem;
+  margin: .6rem 0 .2rem; font-size: .78rem; color: var(--muted);
+}
+.prov-table { width: 100%; margin-top: 8px; border-collapse: collapse; font-size: 12.5px; }
+.prov-table td { padding: 3px 0; vertical-align: middle; }
+.prov-table td:first-child { width: 38%; }
