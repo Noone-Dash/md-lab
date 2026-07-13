@@ -32,7 +32,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from labkit.agent.intent import extract, enforce          # noqa: E402
+from labkit.agent.intent import enforce, extract, resolve_structure   # noqa: E402
 from labkit.agent.translate import translate              # noqa: E402
 from labkit.config import DATA_DIR                        # noqa: E402
 from labkit.plan import Plan, validate                    # noqa: E402
@@ -283,6 +283,7 @@ def run_model(model, k=2, verbose=True):
             raw_s += a; raw_n += b
 
             it = extract(req)
+            resolve_structure(it, req)      # the PDB, not the model's memory
             fin = enforce(raw, it) if raw else None
             c, d, fails = _grade(fin, checks)
             fin_s += c; fin_n += d

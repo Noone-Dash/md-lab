@@ -1,0 +1,1 @@
+crystal structure of meos2-a69t fluorescent protein mol_id: 1; molecule: green to red photoconvertible gfp-like protein eosfp; chain: a, b, c, d, e, f, g, h, i, j, k, l; engineered: yes; mutation: yes

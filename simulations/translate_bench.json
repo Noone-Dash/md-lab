@@ -2,30 +2,61 @@
   {
     "model": "gpt-oss:20b",
     "k": 2,
-    "raw_accuracy": 0.812,
-    "final_accuracy": 0.938,
+    "raw_accuracy": 0.828,
+    "final_accuracy": 0.969,
     "final_ci95": [
-      0.85,
-      0.975
+      0.893,
+      0.991
     ],
-    "uncovered_accuracy": 0.714,
+    "uncovered_accuracy": 0.857,
     "uncovered_ci95": [
-      0.454,
-      0.883
+      0.601,
+      0.96
     ],
-    "guardrail_gain": 0.125,
-    "median_latency_s": 19.1,
+    "uncovered_ungradable": 0,
+    "guardrail_gain": 0.141,
+    "median_latency_s": 11.7,
     "invalid_plans": 0,
     "n_checks": 64
   },
   {
-    "model": "qwen3:8b",
-    "error": "PDB unreachable \u2014 cannot grade this case offline",
-    "final_accuracy": 0
+    "model": "qwen3:14b",
+    "k": 2,
+    "raw_accuracy": 0.891,
+    "final_accuracy": 0.969,
+    "final_ci95": [
+      0.893,
+      0.991
+    ],
+    "uncovered_accuracy": 0.857,
+    "uncovered_ci95": [
+      0.601,
+      0.96
+    ],
+    "uncovered_ungradable": 0,
+    "guardrail_gain": 0.078,
+    "median_latency_s": 72.0,
+    "invalid_plans": 5,
+    "n_checks": 64
   },
   {
-    "model": "qwen3:14b",
-    "error": "PDB unreachable \u2014 cannot grade this case offline",
-    "final_accuracy": 0
+    "model": "qwen3:8b",
+    "k": 2,
+    "raw_accuracy": 0.688,
+    "final_accuracy": 0.844,
+    "final_ci95": [
+      0.736,
+      0.913
+    ],
+    "uncovered_accuracy": 0.857,
+    "uncovered_ci95": [
+      0.601,
+      0.96
+    ],
+    "uncovered_ungradable": 0,
+    "guardrail_gain": 0.156,
+    "median_latency_s": 38.5,
+    "invalid_plans": 2,
+    "n_checks": 64
   }
 ]

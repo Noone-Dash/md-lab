@@ -363,6 +363,11 @@ def enforce(plan: dict, it: Intent) -> dict:
     s2, prov = complete_system(p["system"], rcoulomb_nm=1.0, pinned=pinned)
     p["system"] = s2
     p["_provenance"] = prov
+    # EVERY stage parameter is now (intent -> default), never the model's. Measured: on
+    # a bare request the model used to control 12 of 36 mdp keys, dt=10 fs among them.
+    from ..plan.defaults import complete_stages
+    complete_stages(p, it)
+
     # dt is pinned LAST and on `p` -- the dict we actually return.
     # It used to be written into `plan` (the caller's input) BEFORE the template block,
     # so it mutated a dict nobody reads and was then wiped by the template anyway. The
@@ -373,3 +378,58 @@ def enforce(plan: dict, it: Intent) -> dict:
                 st.setdefault("params", {})["dt"] = it.dt_ps
 
     return p
+
+
+def resolve_structure(it, request: str) -> dict:
+    """Fill pdb_id from the PDB itself, not from the model's memory.
+
+    The benchmark localised every remaining translator error to this one field. All three
+    local models score 100% on covered intents after enforce(); the ONLY thing they still
+    source is a PDB id for a protein outside KNOWN_PDB, and they are bad at it -- they
+    hallucinate well-formed-but-wrong ids (1GFP, 1TND, 1A4M contain none of the requested
+    proteins) or emit no id at all ("GFP", "tendamistat").
+
+    Since d P(correct) / d q = P(not covered), the fix is to SHRINK the uncovered set, not
+    to buy a bigger model. A PDB id is a lookup, and the PDB has a search API.
+
+    -> {'pdb_id', 'source', 'title'} and mutates `it`; source=None if it could not be
+       resolved (offline, or no verified hit), in which case the caller must fall back to
+       the model AND say so.
+    """
+    if it.pdb_id or it.kind not in ("protein", None):
+        return {"pdb_id": it.pdb_id, "source": "intent" if it.pdb_id else None}
+    from ..structures import resolve as _resolve
+    r = _resolve(request, KNOWN_PDB)
+    if r:
+        it.pdb_id = r["pdb_id"]
+        it.kind = "protein"
+        return r
+    return {"pdb_id": None, "source": None}
+
+
+def plan_from_request(request: str, model=None) -> dict:
+    """THE pipeline. One entrypoint so every caller gets the same guarantees.
+
+        extract   (pure)   -> the assertions the request makes
+        resolve   (PDB)    -> the structure, deterministically
+        translate (LLM)    -> shape only; grammar-constrained
+        enforce   (pure)   -> overwrites every physical value the model touched
+    """
+    from .translate import translate as _translate
+    it = extract(request)
+    struct = resolve_structure(it, request)
+    r = _translate(request, model=model)
+    raw = r.get("plan")
+    if not raw:
+        return {"plan": None, "error": r.get("error", "no plan"), "intent": it.assertions()}
+    final = enforce(raw, it)
+    return {
+        "plan": final,
+        "raw": raw,
+        "intent": it.assertions(),
+        "violations": verify(final, it),
+        "structure_source": struct.get("source"),   # curated | rcsb | intent | None
+        "structure_title": struct.get("title"),
+        "model_sourced_structure": struct.get("source") is None and bool(
+            (final.get("system") or {}).get("pdb_id")),
+    }

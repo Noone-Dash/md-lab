@@ -1,0 +1,1 @@
+wide open 1.3a structure of a multi-drug resistant hiv-1 protease represents a novel drug target mol_id: 1; molecule: protease; chain: a, b; ec: 3.4.23.16; engineered: yes; mutation: yes

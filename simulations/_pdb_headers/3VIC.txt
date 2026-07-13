@@ -1,0 +1,1 @@
+green-fluorescent variant of the non-fluorescent chromoprotein rtms5 mol_id: 1; molecule: gfp-like non-fluorescent chromoprotein; chain: a, b, c, d, e, f, g, h; synonym: non-fluorescent pocilloporin, rtms 5; engineered: yes; mutation: yes

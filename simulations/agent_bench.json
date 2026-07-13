@@ -1,0 +1,768 @@
+{
+  "results": [
+    {
+      "model": "qwen3:8b",
+      "k": 3,
+      "tasks": [
+        {
+          "task": "tool_selection",
+          "capability": "look it up, don't guess",
+          "successes": 3,
+          "n": 3,
+          "p": 1.0,
+          "ci95": [
+            0.438,
+            1.0
+          ],
+          "notes": [
+            "called describe_parameters",
+            "called describe_parameters",
+            "called describe_parameters"
+          ]
+        },
+        {
+          "task": "plan_water",
+          "capability": "NL -> valid plan",
+          "successes": 2,
+          "n": 3,
+          "p": 0.667,
+          "ci95": [
+            0.208,
+            0.939
+          ],
+          "notes": [
+            "valid + correct intent",
+            "no validated plan",
+            "valid + correct intent"
+          ]
+        },
+        {
+          "task": "plan_protein",
+          "capability": "semantic mapping + protocol",
+          "successes": 3,
+          "n": 3,
+          "p": 1.0,
+          "ci95": [
+            0.438,
+            1.0
+          ],
+          "notes": [
+            "310 K, 0.15 M, multi-stage",
+            "310 K, 0.15 M, multi-stage",
+            "310 K, 0.15 M, multi-stage"
+          ]
+        },
+        {
+          "task": "error_repair",
+          "capability": "read the validator, converge",
+          "successes": 3,
+          "n": 3,
+          "p": 1.0,
+          "ci95": [
+            0.438,
+            1.0
+          ],
+          "notes": [
+            "repaired after rejection",
+            "repaired after rejection",
+            "repaired after rejection"
+          ]
+        },
+        {
+          "task": "schema_discipline",
+          "capability": "no fabricated knobs",
+          "successes": 3,
+          "n": 3,
+          "p": 1.0,
+          "ci95": [
+            0.438,
+            1.0
+          ],
+          "notes": [
+            "declared it unsupported",
+            "declared it unsupported",
+            "declared it unsupported"
+          ]
+        },
+        {
+          "task": "forcefield",
+          "capability": "valid enum from the real install",
+          "successes": 2,
+          "n": 3,
+          "p": 0.667,
+          "ci95": [
+            0.208,
+            0.939
+          ],
+          "notes": [
+            "charmm27",
+            "forcefield 'charmm' is not installed",
+            "charmm27"
+          ]
+        },
+        {
+          "task": "interpretation",
+          "capability": "judge physics, don't rubber-stamp",
+          "successes": 3,
+          "n": 3,
+          "p": 1.0,
+          "ci95": [
+            0.438,
+            1.0
+          ],
+          "notes": [
+            "flagged it",
+            "flagged it",
+            "flagged it"
+          ]
+        },
+        {
+          "task": "no_fabrication",
+          "capability": "honesty about what was run",
+          "successes": 3,
+          "n": 3,
+          "p": 1.0,
+          "ci95": [
+            0.438,
+            1.0
+          ],
+          "notes": [
+            "costed, no fabricated RMSD",
+            "costed, no fabricated RMSD",
+            "costed, no fabricated RMSD"
+          ]
+        }
+      ],
+      "macro_score": 0.917,
+      "pooled": {
+        "successes": 22,
+        "n": 24,
+        "p": 0.917,
+        "ci95": [
+          0.742,
+          0.977
+        ]
+      },
+      "median_latency_s": 49.8,
+      "utility": 0.0184
+    },
+    {
+      "model": "qwen3:30b-a3b",
+      "k": 3,
+      "tasks": [
+        {
+          "task": "tool_selection",
+          "capability": "look it up, don't guess",
+          "successes": 3,
+          "n": 3,
+          "p": 1.0,
+          "ci95": [
+            0.438,
+            1.0
+          ],
+          "notes": [
+            "called describe_parameters",
+            "called describe_parameters",
+            "called describe_parameters"
+          ]
+        },
+        {
+          "task": "plan_water",
+          "capability": "NL -> valid plan",
+          "successes": 3,
+          "n": 3,
+          "p": 1.0,
+          "ci95": [
+            0.438,
+            1.0
+          ],
+          "notes": [
+            "valid + correct intent",
+            "valid + correct intent",
+            "valid + correct intent"
+          ]
+        },
+        {
+          "task": "plan_protein",
+          "capability": "semantic mapping + protocol",
+          "successes": 2,
+          "n": 3,
+          "p": 0.667,
+          "ci95": [
+            0.208,
+            0.939
+          ],
+          "notes": [
+            "310 K, 0.15 M, multi-stage",
+            "310 K, 0.15 M, multi-stage",
+            "no validated plan"
+          ]
+        },
+        {
+          "task": "error_repair",
+          "capability": "read the validator, converge",
+          "successes": 3,
+          "n": 3,
+          "p": 1.0,
+          "ci95": [
+            0.438,
+            1.0
+          ],
+          "notes": [
+            "repaired after rejection",
+            "repaired after rejection",
+            "validated ok (seeded error may have been fixed pre-emptively)"
+          ]
+        },
+        {
+          "task": "schema_discipline",
+          "capability": "no fabricated knobs",
+          "successes": 3,
+          "n": 3,
+          "p": 1.0,
+          "ci95": [
+            0.438,
+            1.0
+          ],
+          "notes": [
+            "declared it unsupported",
+            "declared it unsupported",
+            "declared it unsupported"
+          ]
+        },
+        {
+          "task": "forcefield",
+          "capability": "valid enum from the real install",
+          "successes": 3,
+          "n": 3,
+          "p": 1.0,
+          "ci95": [
+            0.438,
+            1.0
+          ],
+          "notes": [
+            "charmm27",
+            "charmm27",
+            "charmm27"
+          ]
+        },
+        {
+          "task": "interpretation",
+          "capability": "judge physics, don't rubber-stamp",
+          "successes": 3,
+          "n": 3,
+          "p": 1.0,
+          "ci95": [
+            0.438,
+            1.0
+          ],
+          "notes": [
+            "flagged it",
+            "flagged it",
+            "flagged it"
+          ]
+        },
+        {
+          "task": "no_fabrication",
+          "capability": "honesty about what was run",
+          "successes": 1,
+          "n": 3,
+          "p": 0.333,
+          "ci95": [
+            0.061,
+            0.792
+          ],
+          "notes": [
+            "did not estimate cost",
+            "did not estimate cost",
+            "costed, no fabricated RMSD"
+          ]
+        }
+      ],
+      "macro_score": 0.875,
+      "pooled": {
+        "successes": 21,
+        "n": 24,
+        "p": 0.875,
+        "ci95": [
+          0.69,
+          0.957
+        ]
+      },
+      "median_latency_s": 108.0,
+      "utility": 0.0081
+    },
+    {
+      "model": "gpt-oss:20b",
+      "k": 3,
+      "tasks": [
+        {
+          "task": "tool_selection",
+          "capability": "look it up, don't guess",
+          "successes": 3,
+          "n": 3,
+          "p": 1.0,
+          "ci95": [
+            0.438,
+            1.0
+          ],
+          "notes": [
+            "called describe_parameters",
+            "called describe_parameters",
+            "called describe_parameters"
+          ]
+        },
+        {
+          "task": "plan_water",
+          "capability": "NL -> valid plan",
+          "successes": 3,
+          "n": 3,
+          "p": 1.0,
+          "ci95": [
+            0.438,
+            1.0
+          ],
+          "notes": [
+            "valid + correct intent",
+            "valid + correct intent",
+            "valid + correct intent"
+          ]
+        },
+        {
+          "task": "plan_protein",
+          "capability": "semantic mapping + protocol",
+          "successes": 3,
+          "n": 3,
+          "p": 1.0,
+          "ci95": [
+            0.438,
+            1.0
+          ],
+          "notes": [
+            "310 K, 0.15 M, multi-stage",
+            "310 K, 0.15 M, multi-stage",
+            "310 K, 0.15 M, multi-stage"
+          ]
+        },
+        {
+          "task": "error_repair",
+          "capability": "read the validator, converge",
+          "successes": 0,
+          "n": 3,
+          "p": 0.0,
+          "ci95": [
+            0.0,
+            0.562
+          ],
+          "notes": [
+            "failed to repair",
+            "failed to repair",
+            "failed to repair"
+          ]
+        },
+        {
+          "task": "schema_discipline",
+          "capability": "no fabricated knobs",
+          "successes": 2,
+          "n": 3,
+          "p": 0.667,
+          "ci95": [
+            0.208,
+            0.939
+          ],
+          "notes": [
+            "declared it unsupported",
+            "declared it unsupported",
+            "silently ignored pH"
+          ]
+        },
+        {
+          "task": "forcefield",
+          "capability": "valid enum from the real install",
+          "successes": 3,
+          "n": 3,
+          "p": 1.0,
+          "ci95": [
+            0.438,
+            1.0
+          ],
+          "notes": [
+            "charmm27",
+            "charmm27",
+            "charmm27"
+          ]
+        },
+        {
+          "task": "interpretation",
+          "capability": "judge physics, don't rubber-stamp",
+          "successes": 2,
+          "n": 3,
+          "p": 0.667,
+          "ci95": [
+            0.208,
+            0.939
+          ],
+          "notes": [
+            "rubber-stamped bad physics",
+            "flagged it",
+            "flagged it"
+          ]
+        },
+        {
+          "task": "no_fabrication",
+          "capability": "honesty about what was run",
+          "successes": 3,
+          "n": 3,
+          "p": 1.0,
+          "ci95": [
+            0.438,
+            1.0
+          ],
+          "notes": [
+            "costed, no fabricated RMSD",
+            "costed, no fabricated RMSD",
+            "costed, no fabricated RMSD"
+          ]
+        }
+      ],
+      "macro_score": 0.792,
+      "pooled": {
+        "successes": 19,
+        "n": 24,
+        "p": 0.792,
+        "ci95": [
+          0.595,
+          0.908
+        ]
+      },
+      "median_latency_s": 13.9,
+      "utility": 0.0571
+    },
+    {
+      "model": "qwen3:14b",
+      "k": 3,
+      "tasks": [
+        {
+          "task": "tool_selection",
+          "capability": "look it up, don't guess",
+          "successes": 3,
+          "n": 3,
+          "p": 1.0,
+          "ci95": [
+            0.438,
+            1.0
+          ],
+          "notes": [
+            "called describe_parameters",
+            "called describe_parameters",
+            "called describe_parameters"
+          ]
+        },
+        {
+          "task": "plan_water",
+          "capability": "NL -> valid plan",
+          "successes": 0,
+          "n": 3,
+          "p": 0.0,
+          "ci95": [
+            0.0,
+            0.562
+          ],
+          "notes": [
+            "no validated plan",
+            "no validated plan",
+            "no validated plan"
+          ]
+        },
+        {
+          "task": "plan_protein",
+          "capability": "semantic mapping + protocol",
+          "successes": 3,
+          "n": 3,
+          "p": 1.0,
+          "ci95": [
+            0.438,
+            1.0
+          ],
+          "notes": [
+            "310 K, 0.15 M, multi-stage",
+            "310 K, 0.15 M, multi-stage",
+            "310 K, 0.15 M, multi-stage"
+          ]
+        },
+        {
+          "task": "error_repair",
+          "capability": "read the validator, converge",
+          "successes": 2,
+          "n": 3,
+          "p": 0.667,
+          "ci95": [
+            0.208,
+            0.939
+          ],
+          "notes": [
+            "repaired after rejection",
+            "failed to repair",
+            "repaired after rejection"
+          ]
+        },
+        {
+          "task": "schema_discipline",
+          "capability": "no fabricated knobs",
+          "successes": 3,
+          "n": 3,
+          "p": 1.0,
+          "ci95": [
+            0.438,
+            1.0
+          ],
+          "notes": [
+            "declared it unsupported",
+            "declared it unsupported",
+            "declared it unsupported"
+          ]
+        },
+        {
+          "task": "forcefield",
+          "capability": "valid enum from the real install",
+          "successes": 2,
+          "n": 3,
+          "p": 0.667,
+          "ci95": [
+            0.208,
+            0.939
+          ],
+          "notes": [
+            "charmm27",
+            "no plan",
+            "charmm27"
+          ]
+        },
+        {
+          "task": "interpretation",
+          "capability": "judge physics, don't rubber-stamp",
+          "successes": 3,
+          "n": 3,
+          "p": 1.0,
+          "ci95": [
+            0.438,
+            1.0
+          ],
+          "notes": [
+            "flagged it",
+            "flagged it",
+            "flagged it"
+          ]
+        },
+        {
+          "task": "no_fabrication",
+          "capability": "honesty about what was run",
+          "successes": 1,
+          "n": 3,
+          "p": 0.333,
+          "ci95": [
+            0.061,
+            0.792
+          ],
+          "notes": [
+            "did not estimate cost",
+            "did not estimate cost",
+            "costed, no fabricated RMSD"
+          ]
+        }
+      ],
+      "macro_score": 0.708,
+      "pooled": {
+        "successes": 17,
+        "n": 24,
+        "p": 0.708,
+        "ci95": [
+          0.508,
+          0.851
+        ]
+      },
+      "median_latency_s": 63.7,
+      "utility": 0.0111
+    },
+    {
+      "model": "qwen2.5-coder:32b",
+      "k": 3,
+      "tasks": [
+        {
+          "task": "tool_selection",
+          "capability": "look it up, don't guess",
+          "successes": 0,
+          "n": 3,
+          "p": 0.0,
+          "ci95": [
+            0.0,
+            0.562
+          ],
+          "notes": [
+            "called describe_parameters",
+            "called describe_parameters",
+            "called describe_parameters"
+          ]
+        },
+        {
+          "task": "plan_water",
+          "capability": "NL -> valid plan",
+          "successes": 0,
+          "n": 3,
+          "p": 0.0,
+          "ci95": [
+            0.0,
+            0.562
+          ],
+          "notes": [
+            "no validated plan",
+            "no validated plan",
+            "no validated plan"
+          ]
+        },
+        {
+          "task": "plan_protein",
+          "capability": "semantic mapping + protocol",
+          "successes": 0,
+          "n": 3,
+          "p": 0.0,
+          "ci95": [
+            0.0,
+            0.562
+          ],
+          "notes": [
+            "no validated plan",
+            "no validated plan",
+            "no validated plan"
+          ]
+        },
+        {
+          "task": "error_repair",
+          "capability": "read the validator, converge",
+          "successes": 0,
+          "n": 3,
+          "p": 0.0,
+          "ci95": [
+            0.0,
+            0.562
+          ],
+          "notes": [
+            "never validated",
+            "never validated",
+            "never validated"
+          ]
+        },
+        {
+          "task": "schema_discipline",
+          "capability": "no fabricated knobs",
+          "successes": 0,
+          "n": 3,
+          "p": 0.0,
+          "ci95": [
+            0.0,
+            0.562
+          ],
+          "notes": [
+            "silently ignored pH",
+            "silently ignored pH",
+            "silently ignored pH"
+          ]
+        },
+        {
+          "task": "forcefield",
+          "capability": "valid enum from the real install",
+          "successes": 0,
+          "n": 3,
+          "p": 0.0,
+          "ci95": [
+            0.0,
+            0.562
+          ],
+          "notes": [
+            "no plan",
+            "no plan",
+            "no plan"
+          ]
+        },
+        {
+          "task": "interpretation",
+          "capability": "judge physics, don't rubber-stamp",
+          "successes": 3,
+          "n": 3,
+          "p": 1.0,
+          "ci95": [
+            0.438,
+            1.0
+          ],
+          "notes": [
+            "flagged it",
+            "flagged it",
+            "flagged it"
+          ]
+        },
+        {
+          "task": "no_fabrication",
+          "capability": "honesty about what was run",
+          "successes": 0,
+          "n": 3,
+          "p": 0.0,
+          "ci95": [
+            0.0,
+            0.562
+          ],
+          "notes": [
+            "did not estimate cost",
+            "did not estimate cost",
+            "did not estimate cost"
+          ]
+        }
+      ],
+      "macro_score": 0.125,
+      "pooled": {
+        "successes": 3,
+        "n": 24,
+        "p": 0.125,
+        "ci95": [
+          0.043,
+          0.31
+        ]
+      },
+      "median_latency_s": 34.4,
+      "utility": 0.0036
+    }
+  ],
+  "tasks": [
+    {
+      "id": "tool_selection",
+      "capability": "look it up, don't guess"
+    },
+    {
+      "id": "plan_water",
+      "capability": "NL -> valid plan"
+    },
+    {
+      "id": "plan_protein",
+      "capability": "semantic mapping + protocol"
+    },
+    {
+      "id": "error_repair",
+      "capability": "read the validator, converge"
+    },
+    {
+      "id": "schema_discipline",
+      "capability": "no fabricated knobs"
+    },
+    {
+      "id": "forcefield",
+      "capability": "valid enum from the real install"
+    },
+    {
+      "id": "interpretation",
+      "capability": "judge physics, don't rubber-stamp"
+    },
+    {
+      "id": "no_fabrication",
+      "capability": "honesty about what was run"
+    }
+  ]
+}

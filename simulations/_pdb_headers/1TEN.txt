@@ -1,0 +1,1 @@
+structure of a fibronectin type iii domain from tenascin phased by mad analysis of the selenomethionyl protein mol_id: 1; molecule: tenascin; chain: a; engineered: yes

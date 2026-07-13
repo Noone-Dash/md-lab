@@ -1,0 +1,1 @@
+ada structure complexed with purine riboside at ph 7.0 mol_id: 1; molecule: adenosine deaminase; chain: a, b, c, d; synonym: ada; ec: 3.5.4.4; engineered: yes

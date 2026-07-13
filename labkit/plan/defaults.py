@@ -93,3 +93,81 @@ def complete_system(system: dict, rcoulomb_nm: float = 1.0,
             prov["box_size_nm"] = "intent"
 
     return s, prov
+
+
+# ---------------------------------------------------------------------------------
+# STAGE PARAMETERS. The model sources NONE of them.
+#
+# The measured hole this closes: on a bare request ("Simulate lysozyme"), which pins
+# almost nothing, the LLM still controlled 12 of the 36 mdp keys that reach GROMACS --
+# including dt=0.01 (10 fs: unstable for an atomistic force field), ref-t=500 K, and
+# the entire barostat (pcoupl=no). The earlier "0 residual" measurement was an artifact
+# of only ever testing a MAXIMALLY-SPECIFIED request: when the user says less, the model
+# was deciding more, which is exactly backwards.
+#
+# Every physical field belongs to one of two classes, and neither is the model's:
+#
+#   USER PREFERENCE  (temperature, ensemble, duration, salt, water, force field, box)
+#       -> the deterministic intent contract, or a fixed DEFAULT if the user was silent.
+#          A fixed default is reproducible; an LLM guess is not.
+#
+#   DERIVED PHYSICS  (dt, constraints, cutoffs, thermostat/barostat algorithm, output
+#                     frequencies)
+#       -> a pure function of the force field and the regime. Never a preference at all.
+#
+# The model's job is what it is actually good at: identifying the molecule and the
+# SHAPE of the protocol. Not numbers.
+# ---------------------------------------------------------------------------------
+DEFAULT_TEMPERATURE_K = 300.0
+DEFAULT_PRODUCTION_NS = 0.1
+DT_BY_REGIME = {"atomistic": 0.002, "martini": 0.02}      # ps
+CONSTRAINTS_BY_REGIME = {"atomistic": "h-bonds", "martini": "none"}
+
+
+def default_ensemble(kind: str) -> str:
+    # A condensed phase needs its box relaxed against a barostat; a dilute gas does not
+    # (an NPT barostat on a near-ideal gas is numerically miserable).
+    return "NVT" if kind == "fluid" else "NPT"
+
+
+def complete_stages(plan: dict, intent=None) -> dict:
+    """Overwrite every stage parameter with intent-or-default. Discards the model's."""
+    from .resolve import regime as _regime
+
+    class _S:                                    # resolve.regime() wants an object
+        def __init__(self, d):
+            self.__dict__.update(d)
+    sysd = plan.get("system") or {}
+    try:
+        reg = _regime(_S(sysd))
+    except Exception:                            # noqa: BLE001
+        reg = "atomistic"
+    kind = sysd.get("kind", "protein")
+
+    T = getattr(intent, "temperature_K", None) or DEFAULT_TEMPERATURE_K
+    ens = getattr(intent, "ensemble", None) or default_ensemble(kind)
+    dt = getattr(intent, "dt_ps", None) or DT_BY_REGIME.get(reg, 0.002)
+
+    dyn = [st for st in (plan.get("stages") or []) if st.get("type") == "dynamics"]
+    for st in plan.get("stages") or []:
+        pr = st.setdefault("params", {})
+        pr["temperature"] = T
+        pr["constraints"] = CONSTRAINTS_BY_REGIME.get(reg, "h-bonds")
+        if st.get("type") == "dynamics":
+            pr["dt"] = dt
+            # Only the PRODUCTION stage takes the user's ensemble. Equilibration stages
+            # keep the shape the template gave them (NVT then NPT) -- you relax the box
+            # before you sample from it.
+            if len(dyn) == 1 or st is dyn[-1]:
+                pr["ensemble"] = ens
+            else:
+                pr.setdefault("ensemble", "NPT")
+        else:
+            pr.pop("dt", None)                   # minimisation has no timestep
+            pr.pop("ensemble", None)
+
+    if dyn:
+        prod_ns = getattr(intent, "production_ns", None)
+        if prod_ns is None and dyn[-1].get("sim_time_ns") is None:
+            dyn[-1]["sim_time_ns"] = DEFAULT_PRODUCTION_NS
+    return plan

@@ -71,7 +71,7 @@ def plan_schema() -> dict:
                     "salt_conc_M": {"type": "number", "minimum": 0, "maximum": 3},
                     "neutralize": {"type": "boolean"},
                     "structure_source": {"type": "string", "enum": src},
-                    "pdb_id": {"type": "string"},
+                    "pdb_id": {"type": "string", "pattern": "^[0-9][A-Za-z0-9]{3}$"},
                 },
                 # same reasoning: make the model COMMIT to salt and structure,
                 # rather than omitting them and inheriting 0.0 / "".

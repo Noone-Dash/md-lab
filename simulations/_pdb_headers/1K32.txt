@@ -1,0 +1,1 @@
+crystal structure of the tricorn protease mol_id: 1; molecule: tricorn protease; chain: a, b, c, d, e, f; ec: 3.4.21.-; engineered: yes
