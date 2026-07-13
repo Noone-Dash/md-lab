@@ -136,6 +136,47 @@ def blocking(y):
     return float(plateau), curve
 
 
+def detect_equilibration(y, nskip: int = 1):
+    """Where does the run stop being a startup transient and start being a sample?
+
+    THE PROBLEM. Every mean here discarded a FIXED fraction of the series (50% of energy,
+    25% of an analysis). That number was chosen by nobody, for no reason, and it is wrong
+    in both directions: discard too little and the startup transient drags the mean
+    (a box still contracting reports a low density); discard too much and you throw away
+    good data, inflating the error bar and making a resolvable run unresolvable.
+
+    THE METHOD (Chodera, JCTC 2016). Do not eyeball the plateau -- OPTIMISE for it. For
+    each candidate discard point t, the remaining N-t samples contain
+
+        N_eff(t) = (N - t) / (2 * tau_int(y[t:]))
+
+    EFFECTIVELY INDEPENDENT samples. Discarding more data lowers the numerator but also
+    lowers tau_int (the transient is what makes the series look correlated), so N_eff has
+    an interior maximum. That maximum IS the equilibration point: it is the split that
+    leaves you with the most information, which is exactly the thing you were trading off
+    by hand.
+
+    -> (t0, N_eff_max, tau_int_after)
+    """
+    y = np.asarray([v for v in y if v is not None], dtype=float)
+    n = len(y)
+    if n < 16:
+        return 0, float(n), 0.5
+
+    best_t, best_neff, best_tau = 0, -1.0, 0.5
+    # Never consider discarding more than half: beyond that we are fitting noise, and a
+    # method that can discard 90% of a run will happily do so on a flat series.
+    for t in range(0, n // 2, max(1, nskip)):
+        seg = y[t:]
+        if len(seg) < 16:
+            break
+        tau, _ = tau_int_sokal(seg)
+        neff = len(seg) / (2.0 * max(tau, 0.5))
+        if neff > best_neff:
+            best_t, best_neff, best_tau = t, neff, tau
+    return best_t, best_neff, best_tau
+
+
 # A run must contain at least this many INDEPENDENT samples before we are willing to
 # put a number on its uncertainty. Below it, tau_int itself is not estimable and every
 # error bar -- by either method -- is fiction.

@@ -18,12 +18,24 @@ def _series(manifest, name):
     return None, None
 
 
-def energy_mean(manifest, term, last_frac=0.5, **_):
+def _equilibrated(y):
+    """The part of the series that is a SAMPLE, not a startup transient.
+
+    ONE definition, used by both the mean and its error bar. They used to disagree: the
+    mean came from a fixed last_frac and the error bar from the detected region, so the
+    bar described a different slice of data than the number it was attached to -- which
+    makes it meaningless.
+    """
+    from ..uncertainty import detect_equilibration
+    t0, _, _ = detect_equilibration(y, nskip=max(1, len(y) // 200))
+    return y[t0:], t0
+
+
+def energy_mean(manifest, term, last_frac=None, **_):   # last_frac: legacy, now DETECTED
     x, y = _series(manifest, term)
     if not y:
         return None
-    k = max(1, int(len(y) * last_frac))
-    tail = y[-k:]
+    tail, _t0 = _equilibrated(y)
     return sum(tail) / len(tail)
 
 
@@ -40,8 +52,13 @@ def uncertainty(manifest, spec: dict) -> dict | None:
     x, y = _series(manifest, spec.get(key))
     if not y or len(y) < 16:
         return None
-    frac = spec.get("last_frac", 0.5 if spec["type"] == "energy_mean" else 0.25)
-    k = max(1, int(len(y) * frac))
+    # WHERE the transient ends is DETECTED, not assumed. The old fixed fraction (50% of an
+    # energy series, 25% of an analysis) was chosen by nobody: too small and the startup
+    # transient drags the mean, too large and good data is thrown away and the error bar
+    # inflates. detect_equilibration maximises the number of effectively independent
+    # samples, which is exactly the trade-off the fixed fraction was guessing at.
+    tail, t0 = _equilibrated(y)      # THE SAME slice the mean was computed from
+    k = len(tail)
 
     # dt must be in PICOSECONDS. Do not assume the axis is: gmx rms was writing its
     # x-axis with -tu ns while every energy term is in ps, so the inferred dt (and
@@ -57,18 +74,22 @@ def uncertainty(manifest, spec: dict) -> dict | None:
 
     from ..uncertainty import stats
     st = stats(y[-k:], dt_ps=dt)
+    st["equilibration_discarded"] = t0
+    st["equilibration_frac"] = round(t0 / len(y), 3) if len(y) else 0.0
+    if dt is not None:
+        st["equilibration_ps"] = round(t0 * dt, 2)
     keep = ("mean", "sem", "sem_naive", "sem_sokal", "sem_blocking", "inflation",
             "tau_int", "tau_int_ps", "n", "n_eff", "sd", "resolvable",
-            "blocking_levels", "ci95", "note")
+            "blocking_levels", "ci95", "note", "equilibration_discarded",
+            "equilibration_frac", "equilibration_ps")
     return {kk: st[kk] for kk in keep if kk in st}
 
 
-def analysis_final(manifest, name, last_frac=0.25, **_):
+def analysis_final(manifest, name, last_frac=None, **_):  # last_frac: legacy, now DETECTED
     x, y = _series(manifest, name)
     if not y:
         return None
-    k = max(1, int(len(y) * last_frac))
-    tail = y[-k:]
+    tail, _t0 = _equilibrated(y)
     return sum(tail) / len(tail)
 
 
