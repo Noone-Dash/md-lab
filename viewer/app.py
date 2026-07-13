@@ -251,7 +251,7 @@ def evals_page():
 
 @app.route("/api/chat/status")
 def chat_status():
-    return jsonify({"ready": agent_chat.have_key(), "model": agent_chat.MODEL})
+    return jsonify(agent_chat.status())
 
 
 @app.route("/api/chat", methods=["POST"])

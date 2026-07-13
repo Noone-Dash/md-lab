@@ -101,20 +101,72 @@ def find_gromacs() -> dict:
 
 
 def _gmx_info(binary: str, gmxrc: Path | None, how: str) -> dict:
-    ver = "unknown"
+    ver, mpi, gpu = "unknown", "none", "none"
     try:
-        env = os.environ.copy()
         out = subprocess.run([binary, "--version"], capture_output=True, text=True,
-                             timeout=30, env=env).stdout
+                             timeout=30, env=os.environ.copy()).stdout
         for line in out.splitlines():
-            if "GROMACS version" in line:
+            low = line.lower()
+            if "gromacs version" in low:
                 ver = line.split(":", 1)[1].strip()
-                break
+            elif low.startswith("mpi library"):
+                v = line.split(":", 1)[1].strip().lower()
+                mpi = "thread_mpi" if "thread" in v else ("library" if "mpi" in v else "none")
+            elif low.startswith("gpu support"):
+                gpu = line.split(":", 1)[1].strip()
     except Exception:  # noqa: BLE001
         pass
     return {"binary": binary,
             "gmxrc": str(gmxrc) if gmxrc and Path(gmxrc).exists() else None,
-            "how": how, "version": ver}
+            "how": how, "version": ver, "mpi": mpi, "gpu": gpu}
+
+
+def mdrun_flags() -> list:
+    """The ONE place mdrun parallelism is decided.
+
+    `-ntmpi` is a THREAD-MPI-only flag. On a library-MPI build (gmx_mpi, i.e. what
+    `module load gromacs` gives you at most HPC sites) mdrun aborts:
+        'Setting the number of thread-MPI ranks is only supported with thread-MPI'
+    So it is emitted ONLY when the build is thread-MPI.
+
+    Thread count comes from the CPUs we are actually allowed to use (a Slurm cpuset
+    is usually a subset of the machine), never from the host CPU count.
+    """
+    info = find_gromacs()
+    flags = []
+    if info.get("mpi") == "thread_mpi":
+        flags += ["-nt" "mpi", "1"]      # thread-MPI builds only
+    flags += ["-nt" "omp", str(allowed_cores())]
+    return flags
+
+
+def allowed_cores() -> int:
+    n = os.environ.get("SLURM_CPUS_PER_TASK")
+    if n and n.isdigit():
+        return max(1, min(int(n), 64))
+    try:
+        return max(1, min(len(os.sched_getaffinity(0)), 64))
+    except AttributeError:          # macOS / Windows
+        return max(1, min(os.cpu_count() or 1, 64))
+
+
+def child_env(**overrides) -> dict:
+    """Environment for a child process.
+
+    Must be a COPY of os.environ, not a hand-picked whitelist: dropping
+    LD_LIBRARY_PATH means a module-loaded gmx cannot link its own libs, and dropping
+    MDLAB_DATA means the child writes its results where the parent will never look.
+    """
+    env = dict(os.environ)
+    env["MDLAB_DATA"] = str(DATA_DIR)
+    env["MDLAB_ASSETS"] = str(ASSETS_DIR)
+    env.setdefault("OMP_NUM_THREADS", str(allowed_cores()))
+    for k, v in overrides.items():
+        if v is None:
+            env.pop(k, None)
+        else:
+            env[k] = str(v)
+    return env
 
 
 def gmx_binary() -> str:

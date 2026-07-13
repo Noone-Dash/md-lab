@@ -99,7 +99,7 @@ def run_campaign(plan_dict: dict, run_id: str, target_ns: float, progress_cb=Non
     manifest["progress_pct"] = round(100.0 * manifest["done_ns"] / target_ns, 1)
     push()
 
-    argv = ["mdrun", "-deffnm", name, "-ntmpi", "1",
+    argv = ["mdrun", "-deffnm", name,
             "-nsteps", str(total_steps),
             "-cpt", str(CHECKPOINT_MIN)]
     if (run_dir / f"{name}.cpt").exists():

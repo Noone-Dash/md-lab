@@ -36,10 +36,13 @@ def _shell(cmdline: str, cwd, log_path=None, stdin_text=None, timeout=None):
     reset PATH, unload modules, or emit banners into our parsed output.
     """
     info = _cfg.find_gromacs()
+    setup = os.environ.get("MDLAB_GMX_SETUP", "")   # e.g. "module load gromacs/2023.3"
     if info["gmxrc"]:
         full = f"source {shlex.quote(info['gmxrc'])} >/dev/null 2>&1 && {cmdline}"
     else:
         full = cmdline
+    if setup:
+        full = f"{setup} && {full}"
     log_f = open(log_path, "a") if log_path else None
     try:
         if log_f:
@@ -71,6 +74,15 @@ def gmx(args, cwd, log_path=None, stdin_text=None, timeout=None, check=True):
     Returns (returncode, combined_output).
     """
     argv = [str(a) for a in args]
+    # mdrun parallelism is decided in ONE place (config.mdrun_flags): -ntmpi only on
+    # thread-MPI builds, -ntomp from the CPUs we are actually allowed to use.
+    if argv and argv[0] == "mdrun":
+        have = set(argv)
+        for fl in _cfg.mdrun_flags():
+            if fl.startswith("-") and fl in have:
+                break
+        else:
+            argv = argv + _cfg.mdrun_flags()
     # GROMACS defaults to prompting before overwriting; -quiet+backups off keeps runs clean.
     gmx_bin = _cfg.gmx_binary()          # discovered: $GMX_ROOT, PATH, or a known prefix
     cmdline = (shlex.quote(gmx_bin) + " -quiet -nobackup "

@@ -241,14 +241,16 @@ class Scheduler:
         pfile = JOBS_DIR / f"{job.id}.json"
         pfile.write_text(json.dumps(job.params))
         runjob = [VENV_PY, "-m", "labkit.runjob", job.id, job.key, str(pfile)]
-        env = {
-            "PATH": os.environ.get("PATH", ""),
-            "HOME": os.environ.get("HOME", ""),
-            **({"GMX_ROOT": os.environ["GMX_ROOT"]} if os.environ.get("GMX_ROOT") else {}),
-            "CUDA_VISIBLE_DEVICES": ("0" if (job.needs_gpu and _cfg.has_gpu()) else ""),
-            "OMP_NUM_THREADS": str(cores),
-            "GMX_MAXBACKUP": "-1",
-        }
+        # A hand-picked whitelist silently dropped LD_LIBRARY_PATH (a module-loaded
+        # gmx then cannot link libgromacs) and MDLAB_DATA (parent and child would
+        # resolve DIFFERENT run dirs, so jobs ran where nobody looked).
+        cuda = os.environ.get("CUDA_VISIBLE_DEVICES")
+        if cuda is None and job.needs_gpu and _cfg.has_gpu():
+            cuda = "0"
+        elif not job.needs_gpu:
+            cuda = ""
+        env = _cfg.child_env(OMP_NUM_THREADS=cores, GMX_MAXBACKUP="-1",
+                             CUDA_VISIBLE_DEVICES=cuda)
         try:
             if HAVE_SYSTEMD:
                 unit = f"mdlab-{job.id}"
@@ -265,10 +267,21 @@ class Scheduler:
                 if r.returncode != 0:
                     raise RuntimeError(r.stderr.strip()[-300:] or "systemd-run failed")
             else:
-                full = dict(os.environ); full.update(env)
+                full = env
+                # Pin to a subset of the CPUs we are ACTUALLY allowed to use.
+                # range(cores) assumes we own CPU 0..n — false inside a Slurm cpuset
+                # (EINVAL) and the call does not exist at all on macOS.
+                def _pin():
+                    try:
+                        allowed = sorted(os.sched_getaffinity(0))
+                        if allowed:
+                            os.sched_setaffinity(0, set(allowed[:cores]))
+                    except (AttributeError, OSError):
+                        pass                      # not fatal: just don't pin
+
                 proc = subprocess.Popen(
                     runjob, cwd=str(ROOT), env=full, start_new_session=True,
-                    preexec_fn=lambda: os.sched_setaffinity(0, set(range(cores))))
+                    preexec_fn=_pin)
                 self._procs[job.id] = proc
                 job.pid = proc.pid
             job.state = "running"
@@ -412,7 +425,13 @@ class Scheduler:
         return {}
 
     def _manifest_status(self, jid):
-        return self._manifest(jid).get("status", "done")
+        """A missing or unreadable run.json means the job died before it could write
+        one. Defaulting that to "done" turned every hard failure into a green run in
+        the UI — which is how a wall of errors became invisible."""
+        m = self._manifest(jid)
+        if not m:
+            return "error"
+        return m.get("status", "error")
 
     def _manifest_error(self, jid):
         return self._manifest(jid).get("error")

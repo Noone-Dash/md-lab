@@ -87,7 +87,7 @@ def bench_one(spec):
     rates.append(nsday)
     # repeat the mdrun only (system is already built) to get a median
     for _ in range(REPEATS - 1):
-        gmx(["mdrun", "-deffnm", "bench", "-v", "-ntmpi", "1", "-resethway"],
+        gmx(["mdrun", "-deffnm", "bench", "-v", "-resethway"],
             cwd=run_dir, log_path=log)
         r, _a = _perf(run_dir / "bench.log")
         if r:

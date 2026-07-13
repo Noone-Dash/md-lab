@@ -70,7 +70,7 @@ def translate(nl: str, model: str = None, temperature: float = 0.0) -> dict:
     req = urllib.request.Request(f"{OLLAMA}/api/chat",
                                  data=json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json"})
-    raw = json.loads(urllib.request.urlopen(req, timeout=600).read())["message"]["content"]
+    raw = json.loads(urllib.request.urlopen(req, timeout=150).read())["message"]["content"]
 
     try:
         obj = json.loads(raw)

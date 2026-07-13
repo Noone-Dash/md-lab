@@ -26,11 +26,11 @@ MART_DIR = _ASSETS / "martini"
 
 
 def _insane_bin():
-    """Locate the `insane` console script. It is NOT always at sys.prefix/bin
-    (pip --user, conda, system install all put it elsewhere)."""
+    """Locate the `insane` console script on PATH. If it is not installed, the
+    Martini track raises with an actionable message rather than exec'ing a path
+    that happens to exist on the developer's machine."""
     import shutil as _sh
-    return (_sh.which("insane")
-            or str(Path(sys.prefix) / "bin" / "insane"))
+    return _sh.which("insane")
 
 
 INSANE = _insane_bin()
@@ -205,10 +205,10 @@ class LennardJones(Recipe):
         return [
             Step("grompp (minimise)", ["grompp", "-f", "em.mdp", "-c", "conf.gro",
                  "-p", "topol.top", "-o", "em.tpr", "-maxwarn", "2"]),
-            Step("energy minimisation", ["mdrun", "-deffnm", "em", "-v", "-ntmpi", "1"]),
+            Step("energy minimisation", ["mdrun", "-deffnm", "em", "-v"]),
             Step("grompp (MD)", ["grompp", "-f", "md.mdp", "-c", "em.gro",
                  "-p", "topol.top", "-o", "md.tpr", "-maxwarn", "2"]),
-            Step("MD production", ["mdrun", "-deffnm", "md", "-v", "-ntmpi", "1"]),
+            Step("MD production", ["mdrun", "-deffnm", "md", "-v"]),
         ]
 
     def analyses(self, run_dir, p):
@@ -274,10 +274,10 @@ class WaterBox(Recipe):
                  "-box", box, box, box, "-o", "conf.gro", "-p", "topol.top"]),
             Step("grompp (minimise)", ["grompp", "-f", "em.mdp", "-c", "conf.gro",
                  "-p", "topol.top", "-o", "em.tpr", "-maxwarn", "2"]),
-            Step("energy minimisation", ["mdrun", "-deffnm", "em", "-v", "-ntmpi", "1"]),
+            Step("energy minimisation", ["mdrun", "-deffnm", "em", "-v"]),
             Step("grompp (MD)", ["grompp", "-f", "md.mdp", "-c", "em.gro",
                  "-p", "topol.top", "-o", "md.tpr", "-maxwarn", "2"]),
-            Step("MD production", ["mdrun", "-deffnm", "md", "-v", "-ntmpi", "1"]),
+            Step("MD production", ["mdrun", "-deffnm", "md", "-v"]),
         ]
 
     def analyses(self, run_dir, p):
@@ -336,10 +336,10 @@ class SaltWater(WaterBox):
                  "-conc", p["conc"], "-neutral"], stdin="SOL\n"),
             Step("grompp (minimise)", ["grompp", "-f", "em.mdp", "-c", "conf.gro",
                  "-p", "topol.top", "-o", "em.tpr", "-maxwarn", "2"]),
-            Step("energy minimisation", ["mdrun", "-deffnm", "em", "-v", "-ntmpi", "1"]),
+            Step("energy minimisation", ["mdrun", "-deffnm", "em", "-v"]),
             Step("grompp (MD)", ["grompp", "-f", "md.mdp", "-c", "em.gro",
                  "-p", "topol.top", "-o", "md.tpr", "-maxwarn", "2"]),
-            Step("MD production", ["mdrun", "-deffnm", "md", "-v", "-ntmpi", "1"]),
+            Step("MD production", ["mdrun", "-deffnm", "md", "-v"]),
         ]
 
     def analyses(self, run_dir, p):
@@ -427,10 +427,10 @@ class Protein(Recipe):
         steps += [
             Step("grompp (minimise)", ["grompp", "-f", "em.mdp", "-c", "conf.gro",
                  "-p", "topol.top", "-o", "em.tpr", "-maxwarn", "2"]),
-            Step("energy minimisation", ["mdrun", "-deffnm", "em", "-v", "-ntmpi", "1"]),
+            Step("energy minimisation", ["mdrun", "-deffnm", "em", "-v"]),
             Step("grompp (MD)", ["grompp", "-f", "md.mdp", "-c", "em.gro",
                  "-p", "topol.top", "-o", "md.tpr", "-maxwarn", "2"]),
-            Step("MD production", ["mdrun", "-deffnm", "md", "-v", "-ntmpi", "1"]),
+            Step("MD production", ["mdrun", "-deffnm", "md", "-v"]),
         ]
         return steps
 
@@ -490,6 +490,10 @@ class Martini(Recipe):
             nstxout=max(200, p["nsteps"] // 60)))
 
         def build(run_dir, log_path):
+            if not INSANE:
+                raise RuntimeError(
+                    "The Martini track needs the `insane` bilayer builder, which is not "
+                    "on PATH.\n  pip install 'setuptools<81' insane")
             with open(log_path, "a") as lg:
                 lg.write(f"\n$ insane -l {lipid} -x {x} -y {x} -z {z} -sol W\n")
             r = subprocess.run(
@@ -523,10 +527,10 @@ class Martini(Recipe):
             Step("build bilayer (insane)", [], func=build),
             Step("grompp (minimise)", ["grompp", "-f", "em.mdp", "-c", "bilayer.gro",
                  "-p", "topol.top", "-o", "em.tpr", "-maxwarn", "10"]),
-            Step("energy minimisation", ["mdrun", "-deffnm", "em", "-v", "-ntmpi", "1"]),
+            Step("energy minimisation", ["mdrun", "-deffnm", "em", "-v"]),
             Step("grompp (MD)", ["grompp", "-f", "md.mdp", "-c", "em.gro",
                  "-p", "topol.top", "-o", "md.tpr", "-maxwarn", "10"]),
-            Step("MD production", ["mdrun", "-deffnm", "md", "-v", "-ntmpi", "1"]),
+            Step("MD production", ["mdrun", "-deffnm", "md", "-v"]),
         ]
 
     def analyses(self, run_dir, p):

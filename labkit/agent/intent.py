@@ -55,6 +55,9 @@ class Intent:
     production_ns: float = None
     equilibrate: bool = None
     forcefield: str = None
+    box_padding_nm: float = None
+    box_size_nm: float = None
+    water_model: str = None
     uncovered: list = field(default_factory=list)   # phrases we did NOT understand
 
     def assertions(self) -> dict:
@@ -145,6 +148,25 @@ def extract(nl: str) -> Intent:
         elif "amber" in t:
             it.forcefield = "amber99sb-ildn"
 
+    # ---- box geometry ------------------------------------------------------ #
+    # These were UNCOVERED, so an explicit request ("use 2.0 nm of padding") was
+    # silently overwritten by the deterministic default. Coverage IS the fix.
+    m = re.search(r"(\d+(?:\.\d+)?)\s*nm\s*(?:of\s+)?(?:padding|pad|buffer)", t)
+    if not m:
+        m = re.search(r"(?:padding|pad|buffer)\s*(?:of\s+)?(\d+(?:\.\d+)?)\s*nm", t)
+    if m:
+        it.box_padding_nm = float(m.group(1))
+    m = re.search(r"(\d+(?:\.\d+)?)\s*nm\s*(?:cubic\s*)?box", t)
+    if m:
+        it.box_size_nm = float(m.group(1))
+
+    # ---- water model -------------------------------------------------------- #
+    for wm, pat in (("spce", r"spc/?e"), ("tip3p", r"tip3p"), ("tip4p", r"tip4p"),
+                    ("tip5p", r"tip5p"), ("spc", r"\bspc\b")):
+        if re.search(pat, t):
+            it.water_model = wm
+            break
+
     # ---- what molecule ---------------------------------------------------- #
     m = re.search(r"\b([0-9][a-z0-9]{3})\b", t)          # an explicit PDB id
     if m:
@@ -197,6 +219,14 @@ def verify(plan: dict, it: Intent) -> list:
             v.append(f"production time: asked for {it.production_ns} ns, plan says {prod}")
     if it.equilibrate and len(stages) < 3:
         v.append(f"equilibration: asked for a protocol, plan has {len(stages)} stage(s)")
+    if it.box_padding_nm is not None and abs(
+            float(s.get("box_padding_nm", 0)) - it.box_padding_nm) > 0.01:
+        v.append(f"padding: asked for {it.box_padding_nm} nm, plan says {s.get('box_padding_nm')}")
+    if it.box_size_nm is not None and abs(
+            float(s.get("box_size_nm", 0)) - it.box_size_nm) > 0.01:
+        v.append(f"box: asked for {it.box_size_nm} nm, plan says {s.get('box_size_nm')}")
+    if it.water_model and s.get("water_model") != it.water_model:
+        v.append(f"water: asked for {it.water_model}, plan says {s.get('water_model')}")
     return v
 
 
@@ -216,6 +246,12 @@ def enforce(plan: dict, it: Intent) -> dict:
         s["neutralize"] = True
     if it.forcefield:
         s["forcefield"] = it.forcefield
+    if it.box_padding_nm is not None:
+        s["box_padding_nm"] = it.box_padding_nm
+    if it.box_size_nm is not None:
+        s["box_size_nm"] = it.box_size_nm
+    if it.water_model:
+        s["water_model"] = it.water_model
 
     # protocol: if the user asked for equilibration, the SHAPE is a deterministic
     # template, not something the model improvises.
@@ -253,6 +289,8 @@ def enforce(plan: dict, it: Intent) -> dict:
     pinned = {k for k in ("forcefield", "water_model", "box_shape",
                           "box_size_nm", "box_padding_nm")
               if getattr(it, k, None) is not None}
+    if it.forcefield:
+        pinned.add("forcefield")
     s2, prov = complete_system(p["system"], rcoulomb_nm=1.0, pinned=pinned)
     p["system"] = s2
     p["_provenance"] = prov

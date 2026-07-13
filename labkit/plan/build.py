@@ -148,7 +148,7 @@ def build(plan, run_dir: Path):
             grompp += ["-r", prev_gro]           # restraint reference coordinates
         steps.append(Step(f"grompp ({nm})", grompp))
         steps.append(Step(f"mdrun ({nm})",
-                          ["mdrun", "-deffnm", nm, "-v", "-ntmpi", "1"]))
+                          ["mdrun", "-deffnm", nm, "-v"]))
         prev_gro = f"{nm}.gro"
         last = nm
 
